@@ -4,5 +4,9 @@ dist/
 *.log
 .DS_Store
 *.zip
+*.mp4
+*.png
+*.jpg
+*.jpeg
 config/replit/
-attached_assets/Pasted--type-service-account*
+attached_assets/
