@@ -1,0 +1,148 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mobile-first critical styles */
+html {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  width: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  width: 100%;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Critical loading styles for mobile */
+#root {
+  min-height: 100vh;
+  width: 100%;
+}
+
+:root {
+  /* BNI Brand Colors */
+  --bni-red: hsl(348 85% 47%);
+  --bni-white: hsl(0 0% 100%);
+  --bni-light-grey: hsl(0 0% 95%);
+  
+  /* Theme Variables */
+  --background: var(--bni-light-grey);
+  --foreground: hsl(0 0% 20%);
+  --card: var(--bni-white);
+  --card-foreground: hsl(0 0% 20%);
+  --popover: var(--bni-white);
+  --popover-foreground: hsl(0 0% 20%);
+  --primary: var(--bni-red);
+  --primary-foreground: var(--bni-white);
+  --secondary: hsl(0 0% 85%);
+  --secondary-foreground: hsl(0 0% 20%);
+  --muted: hsl(0 0% 90%);
+  --muted-foreground: hsl(0 0% 45%);
+  --accent: hsl(0 0% 92%);
+  --accent-foreground: var(--bni-red);
+  --destructive: hsl(0 84% 60%);
+  --destructive-foreground: var(--bni-white);
+  --border: hsl(0 0% 88%);
+  --input: var(--bni-white);
+  --ring: var(--bni-red);
+  --font-inter: 'Inter', sans-serif;
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground font-inter antialiased;
+  }
+}
+
+@layer components {
+  .bni-card {
+    @apply bg-white border border-gray-200 rounded-lg shadow-sm;
+  }
+  
+  .bni-button-primary {
+    @apply bg-primary text-primary-foreground hover:opacity-90 font-semibold;
+  }
+  
+  .bni-button-secondary {
+    @apply bg-white text-primary border border-primary hover:bg-primary hover:text-white;
+  }
+  
+  /* Override shadcn/ui Dialog default styles with high specificity */
+  .dialog-header-custom {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+  
+  .dialog-title-left {
+    text-align: left !important;
+    align-self: flex-start !important;
+  }
+  
+  .dialog-description-center {
+    text-align: center !important;
+    align-self: stretch !important;
+  }
+  
+  .status-upcoming {
+    @apply bg-green-50 text-green-700 border-green-200;
+  }
+  
+  .status-ongoing {
+    @apply bg-blue-50 text-blue-700 border-blue-200;
+  }
+  
+  .status-completed {
+    @apply bg-gray-50 text-gray-700 border-gray-200;
+  }
+  
+  .status-closing {
+    @apply bg-yellow-50 text-yellow-700 border-yellow-200;
+  }
+  
+  .bni-section {
+    @apply bg-white border-b border-gray-100;
+  }
+  
+  .bni-header {
+    @apply bg-white border-b border-gray-200;
+  }
+}
+
+@layer utilities {
+  .text-bni-red {
+    color: var(--bni-red);
+  }
+  
+  .bg-bni-red {
+    background-color: var(--bni-red);
+  }
+  
+  .bg-bni-white {
+    background-color: var(--bni-white);
+  }
+  
+  .bg-bni-light-grey {
+    background-color: var(--bni-light-grey);
+  }
+  
+  .font-inter {
+    font-family: var(--font-inter);
+  }
+}
