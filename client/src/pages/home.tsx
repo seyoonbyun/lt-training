@@ -189,8 +189,8 @@ export default function Home() {
                                style={{ borderColor: 'hsl(348 85% 47%)', color: 'hsl(348 85% 47%)' }}>
                           {program.sessionNumber}
                         </Badge>
-                        <Badge variant={program.isAvailable ? "default" : "secondary"}>
-                          {program.isAvailable ? "신청가능" : "신청마감"}
+                        <Badge variant={program.isAvailable && !isApplicationClosed(program.title) ? "default" : "secondary"}>
+                          {program.isAvailable && !isApplicationClosed(program.title) ? "신청가능" : "신청마감"}
                         </Badge>
                       </div>
                       <CardTitle className="text-lg leading-tight transition-colors hover:cursor-pointer" 
@@ -377,8 +377,7 @@ export default function Home() {
                             onClick={() => handleApplyClick(program)}
                             disabled={!program.isAvailable || isApplicationClosed(program.title)}
                           >
-                            {program.isAvailable && !isApplicationClosed(program.title) ? "신청하기" : 
-                             !program.isAvailable ? "종료되었습니다" : "신청마감"}
+                            {program.isAvailable && !isApplicationClosed(program.title) ? "신청하기" : "종료되었습니다!"}
                           </Button>
                           {program.storeUrl && (
                             <Button

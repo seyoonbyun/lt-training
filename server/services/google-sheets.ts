@@ -180,10 +180,13 @@ export class GoogleSheetsService {
       return cached;
     }
 
-    const descriptionSpreadsheetId = process.env.GOOGLE_DESCRIPTION_SPREADSHEET_ID || '';
+    if (!this.secondarySpreadsheetId) {
+      return {};
+    }
     
     try {
-      const url = `${this.baseUrl}/${descriptionSpreadsheetId}/values/A1:Z1000?key=${this.apiKey}`;
+      // LTT 세션등록 시트의 K열(index 10)에서 마감 상태 확인
+      const url = `${this.baseUrl}/${this.secondarySpreadsheetId}/values/${encodeURIComponent("'LTT 세션등록'!A1:K100")}?key=${this.apiKey}`;
       const response = await fetch(url);
       
       if (!response.ok) {
@@ -194,41 +197,23 @@ export class GoogleSheetsService {
       const data = await response.json();
       const rows = data.values || [];
       
-      if (rows.length < 2) {
+      if (rows.length < 3) {
         console.warn("No application status data found in spreadsheet");
         return {};
       }
       
-      let headerRowIndex = 0;
-      let titleIndex = -1;
-      const statusIndex = 9;
-      
-      for (let r = 0; r < Math.min(rows.length, 5); r++) {
-        const row = rows[r] || [];
-        const ti = row.findIndex((h: string) => h?.includes('제목') || h?.includes('과목') || h?.includes('LT Training') || h?.includes('프로그램') || h?.includes('과정') || h?.includes('세션') || h?.includes('LTT'));
-        if (ti !== -1) {
-          headerRowIndex = r;
-          titleIndex = ti;
-          break;
-        }
-      }
-      
-      const actualTitleIndex = titleIndex === -1 ? 3 : titleIndex;
-      if (titleIndex === -1) {
-        headerRowIndex = 0;
-      }
-      
       const applicationStatus: { [title: string]: boolean } = {};
       
-      for (let i = headerRowIndex + 1; i < rows.length; i++) {
+      // 데이터 행은 index 2부터 시작 (헤더 2행)
+      for (let i = 2; i < rows.length; i++) {
         const row = rows[i];
-        if (row && row[actualTitleIndex]) {
-          const title = String(row[actualTitleIndex]).trim();
-          const status = row[statusIndex] ? String(row[statusIndex]).trim().toLowerCase() : '';
-          
-          if (title && title !== '과목') {
-            applicationStatus[title] = status !== '마감';
-          }
+        if (!row || !row[3]) continue;
+        
+        const title = String(row[3]).trim(); // D열: 과목명
+        const deadlineStatus = row[10] ? String(row[10]).trim() : ''; // K열: 마감 상태
+        
+        if (title) {
+          applicationStatus[title] = deadlineStatus !== '마감';
         }
       }
       
@@ -792,6 +777,10 @@ export class GoogleSheetsService {
         const venueLink = row[7] || '';
         const onlineLink = row[8] || '';
         
+        // K열(index 10): 어드민이 '마감' 입력 시 신청 불가
+        const deadlineStatus = row[10] ? String(row[10]).trim() : '';
+        const isClosed = deadlineStatus === '마감';
+
         const program = {
           id: `secondary-${i}`,
           sessionNumber: row[0] || '',
@@ -802,7 +791,7 @@ export class GoogleSheetsService {
           description: descriptions[title] || row[5] || '',
           storeUrl: row[6] || '',
           format: venueLink ? '오프라인' : '온라인',
-          isAvailable: true,
+          isAvailable: !isClosed,
           maxParticipants: 50,
           currentParticipants: 0,
           formattedDate: this.parseKoreanDate(row[1], row[2]),
