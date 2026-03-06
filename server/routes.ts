@@ -346,8 +346,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 결제완료된 신청자 수 조회
       const completedCounts = await googleSheetsService.getAllProgramsCompletedCounts();
 
-      // 신청 상태 조회 (I열의 "마감" 상태)
+      // 신청 상태 조회 (K열의 "마감" 상태)
       const applicationStatus = await googleSheetsService.fetchApplicationStatus();
+      console.log('🔍 /api/secondary-programs applicationStatus:', JSON.stringify(applicationStatus));
 
       // 프로그램에 결제완료 신청자 수와 신청 상태 추가
       const programsWithCounts = programs.map(program => {
@@ -449,7 +450,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ...program,
           completedCount: completedCount,
           currentParticipants: completedCount, // 프로그램 카드에서 사용하는 필드명과 통일
-          isAvailable: applicationStatus[program.title] !== false // K열 마감 상태만 기준 (20초 캐시로 빠른 반영)
+          isAvailable: (program.title in applicationStatus) ? applicationStatus[program.title] : program.isAvailable // K열 마감 상태 우선, 없으면 기본값 사용
         };
       });
       

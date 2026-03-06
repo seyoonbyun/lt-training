@@ -175,54 +175,64 @@ export class GoogleSheetsService {
 
   async fetchApplicationStatus(): Promise<{ [title: string]: boolean }> {
     const cacheKey = 'applicationStatus';
-    // 마감 상태는 20초 캐시 (어드민 변경 빠르게 반영)
+    // 마감 상태는 15초 캐시 (어드민 변경 빠르게 반영)
     const cached = this.cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < 20000) {
+    if (cached && Date.now() - cached.timestamp < 15000) {
       return cached.data;
     }
 
     if (!this.secondarySpreadsheetId) {
+      console.error('❌ fetchApplicationStatus: secondarySpreadsheetId가 비어있습니다');
       return {};
     }
     
     try {
-      // LTT 세션등록 시트의 K열(index 10)에서 마감 상태 확인
-      const url = `${this.baseUrl}/${this.secondarySpreadsheetId}/values/${encodeURIComponent("'LTT 세션등록'!A1:K100")}?key=${this.apiKey}`;
+      // getSecondarySheetPrograms()와 동일한 URL 패턴 사용 (인코딩 없이)
+      const url = `${this.baseUrl}/${this.secondarySpreadsheetId}/values/'LTT 세션등록'!D:K?key=${this.apiKey}`;
+      console.log('📋 fetchApplicationStatus 호출:', url.replace(this.apiKey || '', '***'));
       const response = await fetch(url);
       
       if (!response.ok) {
-        console.error("Failed to fetch application status data:", response.status, response.statusText);
+        const errText = await response.text();
+        console.error('❌ fetchApplicationStatus API 오류:', response.status, errText);
         return {};
       }
       
       const data = await response.json();
       const rows = data.values || [];
+      console.log(`📋 fetchApplicationStatus: ${rows.length}행 조회됨`);
       
       if (rows.length < 3) {
-        console.warn("No application status data found in spreadsheet");
+        console.warn('⚠ fetchApplicationStatus: 데이터 행이 부족합니다 (rows:', rows.length, ')');
         return {};
       }
       
       const applicationStatus: { [title: string]: boolean } = {};
       
       // 데이터 행은 index 2부터 시작 (헤더 2행)
+      // D:K 범위이므로 D=index 0, K=index 7
       for (let i = 2; i < rows.length; i++) {
         const row = rows[i];
-        if (!row || !row[3]) continue;
+        if (!row || !row[0]) continue;
         
-        const title = String(row[3]).trim(); // D열: 과목명
-        const deadlineStatus = row[10] ? String(row[10]).trim() : ''; // K열: 마감 상태
+        const title = String(row[0]).trim(); // D열 (범위 시작이 D이므로 index 0)
+        const deadlineStatus = row[7] ? String(row[7]).trim() : ''; // K열 (D부터 7번째 = index 7)
         
         if (title) {
-          applicationStatus[title] = deadlineStatus !== '마감';
+          const isOpen = deadlineStatus !== '마감';
+          applicationStatus[title] = isOpen;
+          if (!isOpen) {
+            console.log(`🔒 마감 처리됨: "${title}" (K열값: "${deadlineStatus}")`);
+          }
         }
       }
       
+      console.log('📋 fetchApplicationStatus 결과:', JSON.stringify(applicationStatus));
       this.setCachedData(cacheKey, applicationStatus);
       return applicationStatus;
       
     } catch (error) {
-      console.error("Error fetching application status:", error);
+      console.error('❌ fetchApplicationStatus 에러:', error);
       return {};
     }
   }
