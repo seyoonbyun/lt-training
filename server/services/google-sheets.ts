@@ -175,9 +175,10 @@ export class GoogleSheetsService {
 
   async fetchApplicationStatus(): Promise<{ [title: string]: boolean }> {
     const cacheKey = 'applicationStatus';
-    const cached = this.getCachedData<{ [title: string]: boolean }>(cacheKey);
-    if (cached) {
-      return cached;
+    // 마감 상태는 20초 캐시 (어드민 변경 빠르게 반영)
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 20000) {
+      return cached.data;
     }
 
     if (!this.secondarySpreadsheetId) {
