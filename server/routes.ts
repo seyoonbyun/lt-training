@@ -449,7 +449,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ...program,
           completedCount: completedCount,
           currentParticipants: completedCount, // 프로그램 카드에서 사용하는 필드명과 통일
-          isAvailable: applicationStatus[program.title] !== false // 기본값은 true (신청 가능)
+          isAvailable: program.isAvailable && applicationStatus[program.title] !== false // K열 마감 + API 상태 모두 확인
         };
       });
       
