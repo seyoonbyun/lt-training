@@ -10,3 +10,29 @@ dist/
 *.jpeg
 config/replit/
 attached_assets/
+
+# --- 자격증명 (2026-07-30 추가) ---
+# 계기: GCP 서비스 계정 키(ltt-for-protect-*.json)와 2FA 백업코드가 이 폴더에
+# 방치돼 있었다. 이 리포는 공개이므로 `git add .` 한 번이면 커밋됐을 상태였다.
+# 두 파일은 볼트 `99. private/`(클라우드 백업 제외 폴더)로 이동했다.
+# ⚠ 한계: 서비스 계정 키는 파일명이 `<프로젝트명>-<해시>.json` 이라 패턴으로 못 잡는다.
+#    (`*.json` 을 통째로 막으면 package.json 이 깨진다)
+#    그래서 실제 감시는 obsidian_health.py 의 credentials 검사가 담당한다.
+*.pem
+*.pfx
+*.p12
+*.key
+id_rsa*
+*service-account*.json
+*service_account*.json
+*credentials*.json
+*client_secret*.json
+Backup-codes*
+.env.*
+!.env.example
+
+# --- 2026-08-01 자격증명·개인데이터 차단 (사본은 볼트 99. private) ---
+\[리플릿 Replit\] ltt신청 페이지/
+
+# Replit 체크포인트 저장소 (고유 커밋 1,104개, 원격 도달 불가) — 별도 보존
+git/
