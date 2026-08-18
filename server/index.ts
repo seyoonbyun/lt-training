@@ -2,9 +2,13 @@ import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static-serve";
+import { maintenance } from "./middleware/maintenance";
 
 const app = express();
 app.set('trust proxy', true);
+
+// 재정비 모드: 켜져 있으면 모든 요청을 점검 안내로 응답 (해제 = MAINTENANCE_MODE=off)
+app.use(maintenance);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
