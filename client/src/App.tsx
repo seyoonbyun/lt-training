@@ -8,6 +8,8 @@ import { Navigation } from "@/components/navigation";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import Dashboard from "@/pages/dashboard";
+import PaymentSuccess from "@/pages/payment-success";
+import PaymentFail from "@/pages/payment-fail";
 
 // Mobile loading component
 const MobileLoading = () => (
@@ -50,6 +52,8 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/dashboard" component={Dashboard} />
+      <Route path="/payment/success" component={PaymentSuccess} />
+      <Route path="/payment/fail" component={PaymentFail} />
       <Route component={NotFound} />
     </Switch>
   );

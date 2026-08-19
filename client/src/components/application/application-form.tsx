@@ -21,6 +21,8 @@ import {
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { openTossPayment, type PreparedOrder } from "@/lib/toss-payment";
+import { REGIONS, chaptersOf, OTHER_CHAPTER } from "@/lib/regions";
 import type { TrainingProgram, SecondaryProgram } from "@shared/schema";
 
 const applicationSchema = z.object({
@@ -44,6 +46,8 @@ interface ApplicationFormProps {
 
 export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 코어 그룹처럼 목록에 없는 챕터는 '기타'를 골라 직접 입력한다
+  const [chapterDirect, setChapterDirect] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -62,25 +66,36 @@ export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
 
   const submitMutation = useMutation({
     mutationFn: async (data: ApplicationFormData) => {
-      return apiRequest("POST", "/api/applications", {
+      // 신청 접수와 주문 생성을 한 번에 한다. 금액은 서버가 시트에서 읽으므로 보내지 않는다.
+      const response = await apiRequest("POST", "/api/payments/prepare", {
         ...data,
         programId: program?.id || "",
         programTitle: program?.title || "",
         trainingType: data.participationType === "실시간 참여" ? "live" : "recorded",
       });
+      return (await response.json()) as PreparedOrder;
     },
-    onSuccess: () => {
-      toast({
-        title: "신청 완료",
-        description: "트레이닝 신청이 성공적으로 제출되었습니다. BNI Korea Store에서 결제를 진행해주세요.",
-      });
+    onSuccess: async (order) => {
       queryClient.invalidateQueries({ queryKey: ["/api/applications"] });
-      form.reset();
-      
-      // Notify parent component of success
-      setTimeout(() => {
-        onSuccess?.();
-      }, 1000);
+
+      toast({
+        title: "결제창을 엽니다",
+        description: "결제를 완료하셔야 신청이 확정됩니다.",
+      });
+
+      try {
+        // 결제창이 뜨면 토스 도메인으로 넘어가고, 끝나면 /payment/success 로 돌아온다.
+        await openTossPayment(order);
+      } catch (error: any) {
+        // 사용자가 결제창을 닫은 경우도 여기로 온다.
+        toast({
+          title: "결제가 진행되지 않았습니다",
+          description:
+            error?.message ||
+            "결제창이 닫혔습니다. 신청은 접수되었으나 결제를 완료하셔야 확정됩니다.",
+          variant: "destructive",
+        });
+      }
     },
     onError: (error: any) => {
       const isDuplicate = error?.status === 409 || (error?.message && error.message.includes("409"));
@@ -134,25 +149,24 @@ export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>지역 *</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        // 지역이 바뀌면 이전 지역의 챕터가 남지 않도록 비운다
+                        form.setValue("chapter", "");
+                        setChapterDirect(false);
+                      }}
+                      value={field.value}
+                    >
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="지역을 선택해주세요" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="부산1">부산1</SelectItem>
-                        <SelectItem value="강남">강남</SelectItem>
-                        <SelectItem value="송파">송파</SelectItem>
-                        <SelectItem value="인천">인천</SelectItem>
-                        <SelectItem value="대전">대전</SelectItem>
-                        <SelectItem value="용인">용인</SelectItem>
-                        <SelectItem value="고양">고양</SelectItem>
-                        <SelectItem value="중구">중구</SelectItem>
-                        <SelectItem value="성동">성동</SelectItem>
-                        <SelectItem value="화성">화성</SelectItem>
-                        <SelectItem value="창원1">창원1</SelectItem>
-                        <SelectItem value="강서">강서</SelectItem>
+                        {REGIONS.map((region) => (
+                          <SelectItem key={region} value={region}>{region}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -164,15 +178,61 @@ export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
               <FormField
                 control={form.control}
                 name="chapter"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>챕터 *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="소속 챕터명을 입력해주세요 (예: 서울강남)" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                render={({ field }) => {
+                  const region = form.watch("region");
+                  const chapters = chaptersOf(region);
+
+                  return (
+                    <FormItem>
+                      <FormLabel>챕터 *</FormLabel>
+                      {chapterDirect ? (
+                        <div className="space-y-2">
+                          <FormControl>
+                            <Input placeholder="챕터명을 입력해주세요" {...field} />
+                          </FormControl>
+                          <button
+                            type="button"
+                            className="text-xs text-red-600 underline"
+                            onClick={() => {
+                              setChapterDirect(false);
+                              form.setValue("chapter", "");
+                            }}
+                          >
+                            목록에서 선택하기
+                          </button>
+                        </div>
+                      ) : (
+                        <Select
+                          onValueChange={(value) => {
+                            if (value === OTHER_CHAPTER) {
+                              setChapterDirect(true);
+                              form.setValue("chapter", "");
+                              return;
+                            }
+                            field.onChange(value);
+                          }}
+                          value={field.value}
+                          disabled={!region}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue
+                                placeholder={region ? "챕터를 선택해주세요" : "지역을 먼저 선택해주세요"}
+                              />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {chapters.map((chapter) => (
+                              <SelectItem key={chapter} value={chapter}>{chapter}</SelectItem>
+                            ))}
+                            <SelectItem value={OTHER_CHAPTER}>{OTHER_CHAPTER}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
 
               {/* C : 멤버명 */}
@@ -277,7 +337,7 @@ export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
                   disabled={isSubmitting}
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white"
                 >
-                  {isSubmitting ? "제출 중..." : "신청하기"}
+                  {isSubmitting ? "결제창 여는 중..." : "신청하고 결제하기"}
                 </Button>
               </div>
             </form>

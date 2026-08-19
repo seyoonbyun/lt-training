@@ -152,10 +152,10 @@ export default function Home() {
               <h2 className="text-3xl md:text-4xl font-bold mb-4 text-foreground">Business Leadership Program</h2>
               <div className="text-muted-foreground max-w-4xl mx-auto space-y-4" style={{ fontSize: '17px' }}>
                 <p className="font-semibold">
-                  2026년 병오년 상반기 BNI 코리아 리더를 위해 마련된 비즈니스 리더십 프로그램
+                  2026년 병오년 하반기 BNI 코리아 리더를 위해 마련된 비즈니스 리더십 프로그램
                 </p>
                 <p className="text-sm md:text-base">
-                  26년 3/3 (화) 부터 - 3/20 (금) 까지, 총 9일간, 총 21시간 분량의 9개의 세션으로 구성되어있으며<br />
+                  26년 8/27 (목) 부터 - 9/18 (금) 까지, 총 10일간, 총 27시간 분량의 10개의 세션으로 구성되어있으며<br />
                   각 트레이닝 종료 후 익일 오후 1시 부터, '온라인 강의실'을 통해 녹화본을 시청하실 수 있습니다.
                 </p>
                 <p className="text-sm">
@@ -285,15 +285,22 @@ export default function Home() {
                             <div>1차: 오프라인 현장 강의</div>
                             <div className="flex items-center gap-1 flex-nowrap whitespace-nowrap">
                               <span>2차:</span>
-                              <a 
-                                href={program.classroomUrl || "https://bnionline.zoom.us/j/94632419186"}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-800 hover:opacity-75 underline inline-flex items-center gap-0.5"
-                              >
-                                <Monitor className="w-3 h-3 text-blue-800 flex-shrink-0" />
-                                온라인 참가
-                              </a>
+                              {program.classroomUrl ? (
+                                <a
+                                  href={program.classroomUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-800 hover:opacity-75 underline inline-flex items-center gap-0.5"
+                                >
+                                  <Monitor className="w-3 h-3 text-blue-800 flex-shrink-0" />
+                                  온라인 참가
+                                </a>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5">
+                                  <Monitor className="w-3 h-3 flex-shrink-0" />
+                                  온라인 참가
+                                </span>
+                              )}
                               <span>(VOD : 익일 오후3시 업로드)</span>
                             </div>
                             <div className="pt-1 border-t border-red-300">
@@ -422,7 +429,7 @@ export default function Home() {
               <ul className="space-y-3 text-sm text-black">
                 <li className="flex items-start gap-2">
                   <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span>2026년 상반기 리더십 트레이닝이 시작됩니다. 각 세션별 일정과 장소 확인하시고 미리 신청해주세요.</span>
+                  <span>2026년 하반기 리더십 트레이닝이 시작됩니다. 각 세션별 일정과 장소 확인하시고 미리 신청해주세요.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
@@ -481,7 +488,7 @@ export default function Home() {
               <h2 className="text-2xl md:text-3xl font-bold mb-4 text-foreground">Accelerate 2026</h2>
               <div className="space-y-4 text-foreground">
                 <p>
-                  BNI 코리아 리더십 트레이닝 프로그램은 2026 상반기에 각 챕터의 리더로 활동하실 전국 BNI 리더십 팀 대표님들이 모두 참여하셔서 함께 소통하며 참여하는 형식의 트레이닝으로, 서로 교류하고 소통하며 BNI에서의 활동 방식, 노하우, 리더로서의 올바른 방향성에 대해 고민할 수 있는 자리입니다.
+                  BNI 코리아 리더십 트레이닝 프로그램은 2026 하반기에 각 챕터의 리더로 활동하실 전국 BNI 리더십 팀 대표님들이 모두 참여하셔서 함께 소통하며 참여하는 형식의 트레이닝으로, 서로 교류하고 소통하며 BNI에서의 활동 방식, 노하우, 리더로서의 올바른 방향성에 대해 고민할 수 있는 자리입니다.
                 </p>
                 <div className="space-y-2">
                   <p className="font-semibold">4000명의 멤버를 맞이하게 될 BNI 코리아의 2026년 !</p>

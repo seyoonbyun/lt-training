@@ -4,6 +4,14 @@ import { storage } from "./storage";
 import { insertApplicationSchema, insertBulkApplicationSchema } from "../shared/schema";
 import { apiRateLimit, strictApiRateLimit, applicationSubmitRateLimit } from "./middleware/rateLimiting";
 import { googleSheetsService } from "./services/google-sheets";
+import {
+  confirmPayment,
+  createOrderId,
+  getClientKey,
+  getOrder,
+  isConfigured as isTossConfigured,
+  saveOrder,
+} from "./services/toss-payments";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Get all training programs
@@ -144,6 +152,151 @@ export async function registerRoutes(app: Express): Promise<Server> {
           error: error instanceof Error ? error.message : "Unknown error"
         });
       }
+    }
+  });
+
+  // ── 토스페이먼츠 결제 ──────────────────────────────────────────────
+  // 클라이언트 키는 공개해도 되는 값이라 프론트에 내려준다. 시크릿 키는 서버에만 둔다.
+  app.get("/api/payments/config", (req, res) => {
+    res.json({ enabled: isTossConfigured(), clientKey: getClientKey() });
+  });
+
+  // 신청 접수 + 주문 생성. 금액은 클라이언트를 믿지 않고 시트에서 읽는다.
+  app.post("/api/payments/prepare", applicationSubmitRateLimit, async (req, res) => {
+    try {
+      if (!isTossConfigured()) {
+        return res.status(503).json({ message: "결제 설정이 완료되지 않았습니다. 관리자에게 문의해 주세요." });
+      }
+
+      const validatedData = insertApplicationSchema.parse(req.body);
+
+      const isDuplicate = await googleSheetsService.checkDuplicateApplication(
+        validatedData.programTitle,
+        validatedData.phone,
+        validatedData.name
+      );
+      if (isDuplicate) {
+        return res.status(409).json({ message: "이미 동일 과목에 신청이 완료되었습니다.", duplicate: true });
+      }
+
+      const programs = await googleSheetsService.getSecondarySheetPrograms();
+      const program = programs.find((p: any) => p.title === validatedData.programTitle);
+
+      if (!program) {
+        return res.status(400).json({ message: "존재하지 않는 과목입니다." });
+      }
+      if (!program.isAvailable) {
+        return res.status(409).json({ message: "마감된 과목입니다." });
+      }
+      if (!program.price || program.price <= 0) {
+        console.error("❌ 금액 미설정:", validatedData.programTitle);
+        return res.status(503).json({ message: "결제 금액이 설정되지 않은 과목입니다. 관리자에게 문의해 주세요." });
+      }
+
+      // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)은 비어 있어 아직 집계되지 않는다.
+      const application = await storage.submitApplication(validatedData);
+      const sheetRow = (application as any).sheetRow as number | undefined;
+
+      const orderId = createOrderId();
+      saveOrder({
+        orderId,
+        amount: program.price,
+        orderName: program.title,
+        programTitle: program.title,
+        name: validatedData.name,
+        phone: validatedData.phone,
+        email: validatedData.email,
+        createdAt: Date.now(),
+        sheetRow,
+        status: "pending",
+      });
+
+      res.status(201).json({
+        orderId,
+        amount: program.price,
+        orderName: program.title,
+        clientKey: getClientKey(),
+        customerName: validatedData.name,
+        customerEmail: validatedData.email,
+        customerMobilePhone: String(validatedData.phone || "").replace(/[^0-9]/g, ""),
+      });
+    } catch (error) {
+      console.error("결제 준비 실패:", error);
+      if (error instanceof Error && error.name === "ZodError") {
+        return res.status(400).json({ message: "입력 데이터가 올바르지 않습니다." });
+      }
+      res.status(500).json({ message: "결제 준비에 실패했습니다. 다시 시도해 주세요." });
+    }
+  });
+
+  // 결제 승인. 토스가 successUrl 로 돌려준 값을 그대로 받아 승인을 요청한다.
+  app.post("/api/payments/confirm", async (req, res) => {
+    try {
+      const { paymentKey, orderId, amount } = req.body || {};
+
+      if (!paymentKey || !orderId || amount === undefined) {
+        return res.status(400).json({ message: "결제 정보가 올바르지 않습니다." });
+      }
+
+      const order = getOrder(String(orderId));
+      if (!order) {
+        // 재배포 등으로 주문이 사라진 경우. 승인하지 않고 사람이 확인하게 둔다.
+        console.error("❌ 알 수 없는 주문:", orderId);
+        return res.status(404).json({
+          message: "주문 정보를 찾을 수 없습니다. 결제가 진행됐다면 내셔널 오피스로 문의해 주세요.",
+        });
+      }
+
+      // 금액 위변조 방지: 시트에서 읽어 저장해 둔 금액과 반드시 같아야 한다.
+      if (Number(amount) !== order.amount) {
+        console.error(`❌ 금액 불일치: 요청 ${amount} / 주문 ${order.amount} (${orderId})`);
+        return res.status(400).json({ message: "결제 금액이 일치하지 않습니다." });
+      }
+
+      if (order.status === "paid") {
+        return res.json({ ok: true, alreadyConfirmed: true, orderName: order.orderName });
+      }
+
+      const result = await confirmPayment({
+        paymentKey: String(paymentKey),
+        orderId: String(orderId),
+        amount: order.amount,
+      });
+
+      if (!result.ok) {
+        order.status = "failed";
+        return res.status(400).json({ message: result.message, code: result.code });
+      }
+
+      order.status = "paid";
+      order.paymentKey = String(paymentKey);
+
+      // 승인은 끝났으므로 시트 기록이 실패해도 결제 자체는 유효하다.
+      // 사용자에게 실패로 보이지 않게 하되, 로그로 남겨 수기 보정이 가능하게 한다.
+      try {
+        await googleSheetsService.markApplicationPaid(order.sheetRow || 0, {
+          orderId: order.orderId,
+          paymentKey: String(paymentKey),
+          method: result.method,
+          approvedAt: result.approvedAt,
+          amount: order.amount,
+        });
+      } catch (sheetError) {
+        console.error("⚠ 결제는 승인됐으나 시트 기록에 실패했습니다:", order.orderId, sheetError);
+      }
+
+      res.json({
+        ok: true,
+        orderId: order.orderId,
+        orderName: order.orderName,
+        amount: order.amount,
+        method: result.method,
+        approvedAt: result.approvedAt,
+        receiptUrl: result.receiptUrl,
+      });
+    } catch (error) {
+      console.error("결제 승인 처리 실패:", error);
+      res.status(500).json({ message: "결제 승인 처리 중 오류가 발생했습니다." });
     }
   });
 

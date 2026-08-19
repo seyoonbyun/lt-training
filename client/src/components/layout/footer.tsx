@@ -30,7 +30,7 @@ export default function Footer() {
                       <strong className="text-white bg-black px-2 py-1 text-xs rounded-md">Location</strong>
                     </div>
                     <div className="pl-1">
-                      <span style={{fontSize: '14px'}}>서울 성동구 왕십리로 58 서울숲 포휴(FORHU) 211호</span>
+                      <span style={{fontSize: '14px'}}>서울 성동구 왕십리로 58 서울숲 포휴(FORHU) 209호</span>
                     </div>
                   </div>
                   

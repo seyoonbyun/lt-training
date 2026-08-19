@@ -277,7 +277,7 @@ export class MemStorage implements IStorage {
       // Store locally
       this.applications.set(id, application);
 
-      await googleSheetsService.addApplicationToSheet({
+      const sheetRow = await googleSheetsService.addApplicationToSheet({
         programTitle: insertApplication.programTitle,
         region: insertApplication.region || "",
         chapter: application.chapter || "",
@@ -287,6 +287,9 @@ export class MemStorage implements IStorage {
         participationType: application.trainingType === 'live' ? '실시간 참여' : '녹화본 시청(VOD)',
         notes: application.notes || ""
       });
+
+      // 결제 승인 후 이 행의 결제완료 열을 갱신하기 위해 행 번호를 들고 있는다.
+      (application as any).sheetRow = sheetRow;
 
       return application;
     } catch (error) {

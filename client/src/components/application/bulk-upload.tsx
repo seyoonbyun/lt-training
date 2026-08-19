@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { REGIONS, chaptersOf } from "@/lib/regions";
 import { Upload, Download, FileText, CheckCircle, AlertCircle } from "lucide-react";
 
 interface BulkUploadProps {
@@ -290,13 +291,20 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
         if (!app.programTitle || app.programTitle.trim() === "") missing.push("과목명");
         if (!app.name || app.name.trim() === "") missing.push("멤버명");
         if (!app.phone || app.phone.trim() === "") missing.push("연락처");
-        const validRegions = ["부산1", "강남", "송파", "인천", "대전", "용인", "고양", "중구", "성동", "화성", "창원1", "강서"];
-        if (!app.region || app.region.trim() === "") {
+        const region = (app.region || "").trim();
+        if (!region) {
           missing.push("지역");
-        } else if (!validRegions.includes(app.region.trim())) {
-          missing.push(`지역(${app.region} → 허용: ${validRegions.join(', ')})`);
+        } else if (!REGIONS.includes(region)) {
+          missing.push(`지역(${app.region} → 허용: ${REGIONS.join(', ')})`);
         }
-        if (!app.chapter || app.chapter.trim() === "") missing.push("챕터");
+
+        const chapter = (app.chapter || "").trim();
+        if (!chapter) {
+          missing.push("챕터");
+        } else if (REGIONS.includes(region) && !chaptersOf(region).includes(chapter)) {
+          // 코어 그룹 등 목록에 없는 챕터일 수 있어 막지 않고 경고만 남긴다
+          console.warn(`⚠ ${region} 지역 챕터 목록에 없는 값: ${chapter}`);
+        }
         // 이메일은 선택사항이므로 검증에서 제외
         
         if (missing.length > 0) {
@@ -338,7 +346,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       {
         "과목명": "LTT : 파운데이션 T.",
         "지역": "강남",
-        "챕터": "사랑",
+        "챕터": "엑설런트",
         "멤버명": "차은우",
         "연락처(H.P)": "010-1234-5678",
         "이메일": "member1@example.com",
@@ -348,7 +356,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       {
         "과목명": "LTT : 멤버십 위원회 T.",
         "지역": "강남",
-        "챕터": "베러",
+        "챕터": "해피",
         "멤버명": "박보검",
         "연락처(H.P)": "010-1111-2222",
         "이메일": "",
@@ -358,7 +366,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       {
         "과목명": "LTT : PR 코디네이터T.",
         "지역": "송파",
-        "챕터": "성공",
+        "챕터": "트라이브",
         "멤버명": "변우석",
         "연락처(H.P)": "010-9876-5432",
         "이메일": "member3@example.com",
@@ -367,8 +375,8 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       },
       {
         "과목명": "LTT : 교육 코디네이터 T.",
-        "지역": "인천",
-        "챕터": "지혜",
+        "지역": "인천1",
+        "챕터": "히어로",
         "멤버명": "추정우",
         "연락처(H.P)": "010-3333-4444",
         "이메일": "member4@example.com",
@@ -378,7 +386,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       {
         "과목명": "LTT : 성장 코디네이터 T.",
         "지역": "강남",
-        "챕터": "행복",
+        "챕터": "스마트",
         "멤버명": "한소희",
         "연락처(H.P)": "010-5555-6666",
         "이메일": "member5@example.com",
@@ -388,7 +396,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       {
         "과목명": "LTT : ST T.",
         "지역": "용인",
-        "챕터": "용기",
+        "챕터": "오렌지",
         "멤버명": "정해인",
         "연락처(H.P)": "010-1234-5679",
         "이메일": "member6@example.com",
@@ -398,7 +406,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       {
         "과목명": "LTT : 비지터 호스트 T.",
         "지역": "성동",
-        "챕터": "열정",
+        "챕터": "포레스트",
         "멤버명": "이도현",
         "연락처(H.P)": "010-1111-2223",
         "이메일": "member7@example.com",
@@ -408,7 +416,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       {
         "과목명": "LTT : 이벤트 코디네이터 T.",
         "지역": "대전",
-        "챕터": "평화",
+        "챕터": "라온",
         "멤버명": "박서준",
         "연락처(H.P)": "010-9876-5433",
         "이메일": "member8@example.com",
@@ -418,7 +426,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       {
         "과목명": "LTT : 멘토링 코디네이터 T.",
         "지역": "고양",
-        "챕터": "감동",
+        "챕터": "선샤인",
         "멤버명": "공유",
         "연락처(H.P)": "010-3333-4445",
         "이메일": "member9@example.com",
@@ -464,7 +472,8 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
                     <li><strong>여러 과목 동시 신청 가능:</strong> 파운데이션 10명 + 성장 코디네이터 7명 등</li>
                     <li><strong>"과목명" 컬럼 활용:</strong> 각 신청자별로 원하는 과목명 입력</li>
                     <li><strong>필수 정보:</strong> 과목명, 지역, 챕터, 멤버명, 연락처</li>
-                    <li><strong>지역:</strong> 부산1, 강남, 송파, 인천, 대전, 용인, 고양, 중구, 성동, 화성, 창원1, 강서 중 택1</li>
+                    <li><strong>지역:</strong> {REGIONS.join(', ')} 중 택1</li>
+                    <li><strong>챕터:</strong> 해당 지역에 속한 챕터명 (예: 강남 → 엑설런트)</li>
                     <li className="text-red-600 font-medium"><strong>이메일 정보는 모르시면 빈칸으로 두고 업로드 해주시면 됩니다</strong></li>
                     <li><strong>참여 방식:</strong> "실시간 참여" 또는 "녹화본 시청"</li>
                   </ul>

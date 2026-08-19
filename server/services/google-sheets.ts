@@ -481,7 +481,7 @@ export class GoogleSheetsService {
     email: string;
     participationType: string;
     notes: string;
-  }): Promise<void> {
+  }): Promise<number> {
     // 현재 시간 (한국 시간)
     const now = new Date();
     const koreaTime = new Intl.DateTimeFormat('ko-KR', {
@@ -544,10 +544,68 @@ export class GoogleSheetsService {
 
       const result = await response.json();
       console.log(`✅ Google Sheets 저장 성공: ${applicationData.name} (${applicationData.programTitle})`);
+
+      // 결제 승인 후 이 행의 J열(결제완료)을 갱신해야 하므로 행 번호를 돌려준다.
+      // updatedRange 예: '2026 LTT 신청명단'!A15:I15
+      const updatedRange: string = result?.updates?.updatedRange || '';
+      const rowMatch = updatedRange.match(/![A-Z]+(\d+)/);
+      return rowMatch ? parseInt(rowMatch[1], 10) : 0;
     } catch (error) {
       console.error('❌ Google Sheets 저장 실패:', error);
       throw error;
     }
+  }
+
+  /**
+   * 결제 승인이 떨어진 신청 행에 결제 정보를 기록한다.
+   * J열 '완료'가 신청자 수 집계의 기준이므로 이 값이 곧 카운트에 반영된다.
+   */
+  async markApplicationPaid(row: number, info: {
+    orderId: string;
+    paymentKey: string;
+    method?: string;
+    approvedAt?: string;
+    amount?: number;
+  }): Promise<void> {
+    if (!row || row < 2) {
+      console.warn('⚠ markApplicationPaid: 행 번호가 없어 시트 기록을 건너뜁니다.', info.orderId);
+      return;
+    }
+
+    const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets');
+
+    const approvedAtKst = info.approvedAt
+      ? new Intl.DateTimeFormat('ko-KR', {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          timeZone: 'Asia/Seoul'
+        }).format(new Date(info.approvedAt))
+      : '';
+
+    const data = [
+      { range: `'2026 LTT 신청명단'!J${row}`, values: [['완료']] },
+      {
+        range: `'2026 LTT 신청명단'!M${row}:P${row}`,
+        values: [[info.orderId, info.paymentKey, info.method || '', approvedAtKst]],
+      },
+    ];
+
+    const url = `${this.baseUrl}/${this.spreadsheetId}/values:batchUpdate`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ valueInputOption: 'RAW', data }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ 결제완료 기록 실패 (${response.status}):`, errorText);
+      throw new Error(`결제완료 기록 실패: ${response.status}`);
+    }
+
+    // 신청자 수가 즉시 반영되도록 카운트 캐시를 비운다.
+    this.cache.delete('completed-counts');
+    console.log(`✅ 결제완료 기록: ${row}행 / ${info.orderId}`);
   }
 
   async getAllData(): Promise<GoogleSheetsData> {
@@ -786,11 +844,15 @@ export class GoogleSheetsService {
         const title = row[3] || '';
         
         const venueLink = row[7] || '';
-        const onlineLink = row[8] || '';
+        // I열(온라인 강의실)이 비어 있으면 J열(줌링크)을 강의실 링크로 사용
+        const onlineLink = row[8] || row[9] || '';
         
         // K열(index 10): 어드민이 '마감' 입력 시 신청 불가
         const deadlineStatus = row[10] ? String(row[10]).trim() : '';
         const isClosed = deadlineStatus === '마감';
+
+        // L열(index 11): 결제 금액(원). 어드민이 시트에서 직접 관리한다.
+        const price = parseInt(String(row[11] ?? '').replace(/[^0-9]/g, ''), 10) || 0;
 
         const program = {
           id: `secondary-${i}`,
@@ -801,6 +863,7 @@ export class GoogleSheetsService {
           instructor: row[4] || '',
           description: descriptions[title] || row[5] || '',
           storeUrl: row[6] || '',
+          price,
           format: venueLink ? '오프라인' : '온라인',
           isAvailable: !isClosed,
           maxParticipants: 50,
