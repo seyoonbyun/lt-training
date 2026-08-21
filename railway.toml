@@ -1,8 +1,16 @@
-[build]
-builder = "nixpacks"
+# Railway 빌드 설정.
+#
+# ⛔ nixpacks 로는 빌드가 안 된다 (2026-08-22).
+#    환경변수를 12개에서 늘리자 nixpacks 가 생성한 Dockerfile 이 깨졌다 —
+#      dockerfile parse error on line 14: ENV names can not be blank
+#    같은 커밋이 변수 12개일 때는 성공했고, 변수를 하나씩 지워 가며 확인해도
+#    특정 변수를 짚을 수 없었다(이름·값 모두 정상). 생성된 Dockerfile 은 볼 수 없다.
+#    → Dockerfile 을 만들지 않는 railpack 으로 옮겨 우회한다.
+#
+#    되돌리려면 builder 를 "nixpacks" 로 바꾸면 된다.
 
-[build.nixpacks]
-nixPkgs = ["nodejs_20"]
+[build]
+builder = "railpack"
 
 [deploy]
 startCommand = "npm run start"
