@@ -158,4 +158,6 @@ export interface SecondaryProgram {
   notionUrl?: string; // Notion 링크
   classroomUrl?: string; // 온라인 강의실 URL (I열)
   venueUrl?: string; // 오프라인 강의실 URL (H열)
+  format?: string; // '오프라인' | '온라인' — H열(오프라인 장소) 유무로 서버가 판정
+  price?: number; // 시트 L열 단가(원). 실제 청구액은 서버가 다시 계산한다
 }

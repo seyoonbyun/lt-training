@@ -229,6 +229,134 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * 일괄 신청 결제 준비.
+   * 스토어에서 수량을 손으로 올려 결제하던 것을 대체한다. 수량은 사람이 아니라
+   * 업로드한 명단이 정한다 — 중복 제외 후 실제로 시트에 들어간 인원수가 곧 수량이다.
+   * 금액은 클라이언트를 믿지 않고 서버가 시트 L열(단가) x 인원수로 계산한다.
+   */
+  app.post("/api/payments/prepare-bulk", applicationSubmitRateLimit, async (req, res) => {
+    try {
+      if (!isTossConfigured()) {
+        return res.status(503).json({ message: "결제 설정이 완료되지 않았습니다. 관리자에게 문의해 주세요." });
+      }
+
+      const { applications, payer } = req.body || {};
+
+      if (!Array.isArray(applications) || applications.length === 0) {
+        return res.status(400).json({ message: "신청 명단이 비어 있습니다." });
+      }
+      if (!payer || !String(payer.name || "").trim() || !String(payer.phone || "").trim()) {
+        return res.status(400).json({ message: "결제자 성명과 연락처를 입력해 주세요." });
+      }
+
+      const programTitle = String(applications[0]?.programTitle || "").trim();
+      const programs = await googleSheetsService.getSecondarySheetPrograms();
+      const program = programs.find((p: any) => p.title === programTitle);
+
+      if (!program) {
+        return res.status(400).json({ message: "존재하지 않는 과목입니다." });
+      }
+      if (!program.isAvailable) {
+        return res.status(409).json({ message: "마감된 과목입니다." });
+      }
+      if (!program.price || program.price <= 0) {
+        console.error("❌ 금액 미설정:", programTitle);
+        return res.status(503).json({ message: "결제 금액이 설정되지 않은 과목입니다. 관리자에게 문의해 주세요." });
+      }
+
+      // 이미 신청된 인원은 빼고 접수한다. 결제 금액도 그만큼 줄어든다.
+      const duplicateEntries = await googleSheetsService.checkBulkDuplicates(
+        applications.map((app: any) => ({
+          programTitle: String(app.programTitle || "").trim(),
+          phone: String(app.phone || "").trim(),
+          name: String(app.name || "").trim(),
+        }))
+      );
+      const duplicateKeys = new Set(
+        duplicateEntries.map((d: any) => `${d.programTitle}|${d.phone.replace(/\D/g, "")}`)
+      );
+      const duplicateNames = duplicateEntries.map((d: any) => d.name);
+
+      const filtered = applications.filter((app: any) => {
+        const key = `${String(app.programTitle || "").trim()}|${String(app.phone || "").trim().replace(/\D/g, "")}`;
+        return !duplicateKeys.has(key);
+      });
+
+      if (filtered.length === 0) {
+        return res.status(409).json({
+          message: `명단이 모두 기존 신청자입니다: ${duplicateNames.join(", ")}`,
+          duplicate: true,
+          duplicateNames,
+        });
+      }
+
+      const validated = filtered.map((app: any) =>
+        insertBulkApplicationSchema.parse({
+          ...app,
+          programId: app.programId || `bulk-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: String(app.name || "").trim(),
+          email: app.email ? String(app.email).trim() : "",
+          phone: String(app.phone || "").trim(),
+          region: String(app.region || "").trim(),
+          chapter: String(app.chapter || "").trim(),
+          participationType: String(app.participationType || "실시간 참여").trim(),
+          notes: String(app.notes || "").trim(),
+          programTitle: String(app.programTitle || "").trim(),
+          trainingType: app.trainingType || "live",
+        })
+      );
+
+      // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)이 비어 있어 아직 집계되지 않는다.
+      const submitted = await storage.bulkSubmitApplications(validated);
+      const sheetRows = submitted
+        .map((a: any) => a.sheetRow as number | undefined)
+        .filter((r): r is number => typeof r === "number" && r > 1);
+
+      if (sheetRows.length === 0) {
+        console.error("❌ 일괄 신청이 시트에 기록되지 않아 결제를 중단합니다:", programTitle);
+        return res.status(500).json({ message: "신청 명단 기록에 실패했습니다. 내셔널 오피스로 문의해 주세요." });
+      }
+
+      const quantity = sheetRows.length;
+      const amount = program.price * quantity;
+      const orderId = createOrderId("LTT-BULK");
+
+      saveOrder({
+        orderId,
+        amount,
+        orderName: `${program.title} 외 ${quantity}명`,
+        programTitle: program.title,
+        name: String(payer.name).trim(),
+        phone: String(payer.phone).trim(),
+        email: String(payer.email || "").trim(),
+        createdAt: Date.now(),
+        sheetRows,
+        quantity,
+        status: "pending",
+      });
+
+      res.status(201).json({
+        orderId,
+        amount,
+        unitPrice: program.price,
+        quantity,
+        orderName: `${program.title} 외 ${quantity}명`,
+        clientKey: getClientKey(),
+        customerName: String(payer.name).trim(),
+        customerEmail: String(payer.email || "").trim(),
+        customerMobilePhone: String(payer.phone || "").replace(/[^0-9]/g, ""),
+        skippedDuplicates: duplicateNames,
+      });
+    } catch (error: any) {
+      console.error("일괄 결제 준비 실패:", error);
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ message: "명단의 양식에 오류가 있어 신청이 보류되었습니다." });
+      }
+      res.status(500).json({ message: "결제 준비에 실패했습니다. 다시 시도해 주세요." });
+    }
+  });
+
   // 결제 승인. 토스가 successUrl 로 돌려준 값을 그대로 받아 승인을 요청한다.
   app.post("/api/payments/confirm", async (req, res) => {
     try {
@@ -273,16 +401,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // 승인은 끝났으므로 시트 기록이 실패해도 결제 자체는 유효하다.
       // 사용자에게 실패로 보이지 않게 하되, 로그로 남겨 수기 보정이 가능하게 한다.
-      try {
-        await googleSheetsService.markApplicationPaid(order.sheetRow || 0, {
-          orderId: order.orderId,
-          paymentKey: String(paymentKey),
-          method: result.method,
-          approvedAt: result.approvedAt,
-          amount: order.amount,
-        });
-      } catch (sheetError) {
-        console.error("⚠ 결제는 승인됐으나 시트 기록에 실패했습니다:", order.orderId, sheetError);
+      // 일괄 결제는 한 주문이 여러 행을 덮는다. 한 행이 실패해도 나머지는 계속 찍는다.
+      const rowsToMark = order.sheetRows?.length ? order.sheetRows : [order.sheetRow || 0];
+      for (const row of rowsToMark) {
+        try {
+          await googleSheetsService.markApplicationPaid(row, {
+            orderId: order.orderId,
+            paymentKey: String(paymentKey),
+            method: result.method,
+            approvedAt: result.approvedAt,
+            amount: order.quantity ? order.amount / order.quantity : order.amount,
+          });
+        } catch (sheetError) {
+          console.error(`⚠ 결제는 승인됐으나 시트 기록에 실패했습니다: ${order.orderId} (행 ${row})`, sheetError);
+        }
       }
 
       res.json({

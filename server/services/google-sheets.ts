@@ -844,6 +844,8 @@ export class GoogleSheetsService {
         const title = row[3] || '';
         
         const venueLink = row[7] || '';
+        // H열은 '표기 + URL' 형태를 허용한다. href 로 쓸 수 있는 건 URL 부분뿐이다.
+        const venueUrl = (String(venueLink).match(/https?:\/\/[^\s]+/i) || [''])[0];
         // I열(온라인 강의실)이 비어 있으면 J열(줌링크)을 강의실 링크로 사용
         const onlineLink = row[8] || row[9] || '';
         
@@ -870,7 +872,7 @@ export class GoogleSheetsService {
           currentParticipants: 0,
           formattedDate: this.parseKoreanDate(row[1], row[2]),
           location: this.parseLocationFromData(venueLink || onlineLink, title),
-          venueUrl: venueLink || '',
+          venueUrl: venueUrl,
           classroomUrl: onlineLink || '',
           notionUrl: this.getNotionLink(title)
         };

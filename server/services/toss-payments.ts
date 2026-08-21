@@ -23,6 +23,10 @@ export interface PendingOrder {
   createdAt: number;
   /** 신청명단 시트에서 이 주문이 기록된 행 번호 (1-based) */
   sheetRow?: number;
+  /** 일괄 신청: 이 주문 한 건이 덮는 신청 행 번호들 (1-based) */
+  sheetRows?: number[];
+  /** 일괄 신청 인원수. 금액 = 단가 x quantity */
+  quantity?: number;
   status: "pending" | "paid" | "failed";
   paymentKey?: string;
 }
@@ -59,10 +63,10 @@ export function getOrder(orderId: string): PendingOrder | undefined {
  * 주문번호. 토스 규격은 영문/숫자/하이픈/언더스코어 6~64자다.
  * 한글 과목명은 쓸 수 없어 타임스탬프 + 난수로만 만든다.
  */
-export function createOrderId(): string {
+export function createOrderId(prefix: string = "LTT"): string {
   const stamp = Date.now().toString(36);
   const rand = Math.random().toString(36).slice(2, 10);
-  return `LTT-${stamp}-${rand}`.toUpperCase();
+  return `${prefix}-${stamp}-${rand}`.toUpperCase();
 }
 
 export function getClientKey(): string {

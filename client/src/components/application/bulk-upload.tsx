@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { REGIONS, chaptersOf } from "@/lib/regions";
+import { openTossPayment } from "@/lib/toss-payment";
 import { Upload, Download, FileText, CheckCircle, AlertCircle } from "lucide-react";
 
 interface BulkUploadProps {
@@ -17,6 +18,8 @@ interface BulkUploadProps {
     title: string;
     id: string;
     storeUrl?: string;
+    /** 시트 L열 단가. 금액 미리보기에만 쓴다 — 실제 청구액은 서버가 다시 계산한다. */
+    price?: number;
   };
 }
 
@@ -37,38 +40,49 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<{ success: number; error: number } | null>(null);
+  const [parsedCount, setParsedCount] = useState<number | null>(null);
+  const [payer, setPayer] = useState({ name: "", phone: "", email: "" });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const uploadMutation = useMutation({
     mutationFn: async (applications: ExcelRow[]) => {
-      const res = await apiRequest("POST", "/api/applications/bulk", {
+      // 명단을 접수하고, 그 인원수만큼의 금액으로 주문을 만든다.
+      // 수량과 금액은 서버가 정한다 — 클라이언트가 보낸 값은 쓰지 않는다.
+      const res = await apiRequest("POST", "/api/payments/prepare-bulk", {
         applications,
+        payer,
       });
       return res.json();
     },
-    onSuccess: (data: any) => {
-      setResults({ success: data.count || 1, error: 0 });
+    onSuccess: async (order: any) => {
+      setResults({ success: order.quantity || 0, error: 0 });
       queryClient.invalidateQueries({ queryKey: ["/api/applications"] });
 
-      if (data.partialSuccess && data.skippedDuplicates?.length > 0) {
+      const skipped = order.skippedDuplicates || [];
+      toast({
+        title: `${order.quantity}명 접수 · 결제창을 엽니다`,
+        description: skipped.length > 0
+          ? `이미 신청된 인원은 제외했습니다: ${skipped.join(", ")}
+
+제외분을 뺀 ${order.quantity}명분으로 결제됩니다.`
+          : "결제를 완료하셔야 신청이 확정됩니다.",
+      });
+
+      try {
+        // 결제창이 뜨면 토스 도메인으로 넘어가고, 끝나면 /payment/success 로 돌아온다.
+        await openTossPayment(order);
+      } catch (error: any) {
+        // 사용자가 결제창을 닫은 경우도 여기로 온다.
         toast({
-          title: `일괄 신청 완료 (${data.count}명 접수)`,
-          description: `신청이 완료되었습니다. 결제 페이지로 이동합니다.\n\n※ 이미 신청된 인원은 제외되었습니다: ${data.skippedDuplicates.join(', ')}`,
-        });
-      } else {
-        toast({
-          title: "일괄 신청 완료",
-          description: "신청이 성공적으로 제출되었습니다. 결제 페이지로 이동합니다.",
+          title: "결제가 진행되지 않았습니다",
+          description:
+            error?.message ||
+            "결제창이 닫혔습니다. 신청은 접수되었으나 결제를 완료하셔야 확정됩니다.",
+          variant: "destructive",
         });
       }
-      
-      setTimeout(() => {
-        const paymentUrl = program?.storeUrl || "https://bnikoreastore.com/surl/P/752";
-        window.open(paymentUrl, "_blank");
-        onSuccess?.();
-      }, 2000);
     },
     onError: async (error: any) => {
       const isDuplicate = error?.status === 409 || (error?.message && error.message.includes("409"));
@@ -128,11 +142,21 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
     },
   });
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      setResults(null);
+    if (!selectedFile) return;
+
+    setFile(selectedFile);
+    setResults(null);
+    setParsedCount(null);
+
+    // 결제 전에 인원수와 금액을 보여주기 위해 미리 세어 둔다.
+    // 중복 제외는 서버가 하므로 이 값은 최댓값이고, 실제 청구액은 그보다 작거나 같다.
+    try {
+      const rows = await parseExcelFile(selectedFile);
+      setParsedCount(rows.length);
+    } catch {
+      setParsedCount(null);
     }
   };
 
@@ -269,6 +293,15 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
       toast({
         title: "파일 선택 필요",
         description: "업로드할 엑셀 파일을 선택해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!payer.name.trim() || !payer.phone.trim()) {
+      toast({
+        title: "결제자 정보 필요",
+        description: "결제하시는 분의 성명과 연락처를 입력해주세요. 영수증과 결제 문의에 쓰입니다.",
         variant: "destructive",
       });
       return;
@@ -485,6 +518,9 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">2. 파일 업로드</span>
+              {parsedCount !== null && (
+                <span className="text-sm text-gray-600">명단 {parsedCount}명</span>
+              )}
             </div>
             
             <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center">
@@ -526,6 +562,48 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
             </div>
           </div>
 
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">3. 결제자 정보</span>
+            </div>
+            <p className="text-xs text-gray-500">
+              챕터를 대표해 결제하시는 분입니다. 영수증과 결제 문의에 쓰입니다.
+            </p>
+            <div className="grid gap-3 md:grid-cols-3">
+              <Input
+                placeholder="결제자 성명 *"
+                value={payer.name}
+                onChange={(e) => setPayer((v) => ({ ...v, name: e.target.value }))}
+              />
+              <Input
+                placeholder="연락처 * (010-1234-5678)"
+                value={payer.phone}
+                onChange={(e) => setPayer((v) => ({ ...v, phone: e.target.value }))}
+              />
+              <Input
+                type="email"
+                placeholder="이메일 (선택)"
+                value={payer.email}
+                onChange={(e) => setPayer((v) => ({ ...v, email: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          {parsedCount !== null && program?.price ? (
+            <div className="p-4 bg-gray-100 border border-red-600 rounded-lg space-y-1">
+              <p className="text-sm font-bold text-gray-600">결제 금액</p>
+              <p className="text-sm text-gray-600">
+                {parsedCount}명 × {program.price.toLocaleString()}원 ={" "}
+                <strong className="text-red-600">
+                  {(parsedCount * program.price).toLocaleString()}원
+                </strong>
+              </p>
+              <p className="text-xs text-gray-500">
+                ※ 이미 신청된 인원이 있으면 그만큼 빠진 금액으로 결제창이 열립니다.
+              </p>
+            </div>
+          ) : null}
+
           {isProcessing && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
@@ -540,7 +618,7 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
             <Alert className="border-[#059807] bg-[#059807]/10 dark:bg-[#059807]/20">
               <CheckCircle className="h-4 w-4 text-[#059807]" />
               <AlertDescription className="text-[#059807] dark:text-[#059807]">
-                성공적으로 완료되었습니다! {results.success}개의 신청이 처리되었습니다.
+                {results.success}명 접수되었습니다. 결제를 완료하셔야 신청이 확정됩니다.
               </AlertDescription>
             </Alert>
           )}
@@ -550,7 +628,11 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
             disabled={!file || isProcessing}
             className="w-full bg-red-600 hover:bg-red-700 text-white"
           >
-            {isProcessing ? "처리 중..." : "일괄 신청하기"}
+            {isProcessing
+              ? "결제창 여는 중..."
+              : parsedCount !== null && program?.price
+                ? `${(parsedCount * program.price).toLocaleString()}원 신청하고 결제하기`
+                : "일괄 신청하고 결제하기"}
           </Button>
         </CardContent>
       </Card>

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ApplicationTypeModal } from "@/components/application/application-type-modal";
-import { Calendar, Clock, User, MapPin, ExternalLink, AlertTriangle, CreditCard, ShoppingCart, ArrowRight, Monitor, Users } from "lucide-react";
+import { Calendar, Clock, User, MapPin, ExternalLink, AlertTriangle, CreditCard, ArrowRight, Monitor, Users } from "lucide-react";
 import heroImage from "@assets/Image_fx_1755098115275.jpg";
 import heroVideo from "@assets/team_1755249611475.mp4";
 import buildingImage from "@assets/화면 캡처 2025-08-11 232105_1754922103429.png";
@@ -224,9 +224,10 @@ export default function Home() {
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 text-sm">
                           <MapPin className="w-4 h-4 text-red-600" />
-                          {program.location.includes('섬유센터 컨퍼런스홀') && (program.venueUrl || program.classroomUrl) ? (
+                          {/* H열(오프라인 장소)에 지도 URL이 있으면 장소명을 그 링크로 건다 */}
+                          {program.venueUrl ? (
                             <a 
-                              href={program.venueUrl || program.classroomUrl} 
+                              href={program.venueUrl} 
                               target="_blank" 
                               rel="noopener noreferrer"
                               className="text-blue-800 hover:text-red-600 underline"
@@ -280,7 +281,8 @@ export default function Home() {
                           </div>
                         )}
                         
-                        {program.location.includes('섬유센터 컨퍼런스홀') && (
+                        {/* 오프라인 세션(H열에 장소가 있는 세션) 공통 안내. 스페이스 쉐어는 아래 전용 박스가 따로 있다 */}
+                        {program.format === '오프라인' && !program.location.includes('스페이스 쉐어') && (
                           <div className="p-3 border border-red-600 rounded-md text-xs text-red-600 space-y-1">
                             <div>1차: 오프라인 현장 강의</div>
                             <div className="flex items-center gap-1 flex-nowrap whitespace-nowrap">
@@ -386,17 +388,6 @@ export default function Home() {
                           >
                             {program.isAvailable && !isApplicationClosed(program.title) ? "신청하기" : "종료되었습니다!"}
                           </Button>
-                          {program.storeUrl && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="px-3"
-                              onClick={() => window.open(program.storeUrl, '_blank')}
-                              disabled={!program.isAvailable || isApplicationClosed(program.title)}
-                            >
-                              <ShoppingCart className="w-4 h-4" />
-                            </Button>
-                          )}
                         </div>
                         {program.isAvailable && !isApplicationClosed(program.title) && (
                           <p className="text-xs text-gray-500 text-center">
@@ -433,27 +424,24 @@ export default function Home() {
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span>모든 트레이닝의 참가신청은 신청폼 제출 후, 연동되는 스토어를 통해 결제까지 마무리해주셔야 완료됩니다.</span>
+                  <span>모든 트레이닝의 참가신청은 신청서 작성 후 이어지는 결제까지 마치셔야 완료됩니다.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
                   <div>
-                    <span>스토어에서 결제하실 때, '챕터명/신청자명' 기재란에, 신청폼에 남겨주신 성함과 동일하게 기재해주셔야 결제내역이 바로 매칭됩니다.</span>
-                    <br />
+                    <span><strong>챕터 일괄 신청</strong>은 엑셀 업로드 후 스토어 결제 페이지로 이동합니다. 기재란에 '챕터명/신청인원수' 로 남겨주셔야 결제내역이 매칭됩니다.</span>
                     <div className="flex items-start gap-4 mt-2">
                       <div className="flex-1">
-                        <div className="text-xs text-gray-600 mb-1">※ 멤버 개인 결제 시 : '챕터명/신청자명' 로 기재해주시면 됩니다. (작성예시 : 해피/홍길동)</div>
-                        <div className="text-xs text-gray-600">※ 챕터 일괄 결제 시 : '챕터명/신청인원수' 로 기재해주시면 됩니다. (작성예시 : 해피/20명)</div>
+                        <div className="text-xs text-gray-600">※ 작성예시 : 해피/20명</div>
                       </div>
                       <div className="flex-shrink-0 hidden md:block">
                         <img 
                           src={paymentImagePath} 
-                          alt="결제 시 기재 방법 참고 이미지"
+                          alt="일괄 결제 시 기재 방법 참고 이미지"
                           className="w-[270px] h-auto"
                         />
                       </div>
                     </div>
-
                   </div>
                 </li>
                 <li className="flex items-start gap-2">

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApplicationForm } from "./application-form";
 import { BulkUpload } from "./bulk-upload";
-import { ArrowLeft, FileText, Upload, User, Users, ExternalLink } from "lucide-react";
+import { ArrowLeft, FileText, Upload, User, Users } from "lucide-react";
 import type { TrainingProgram, SecondaryProgram } from "@shared/schema";
 
 interface ApplicationTypeModalProps {
@@ -30,12 +30,7 @@ export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: Appli
   };
 
   const handleSuccess = () => {
-    // 개별 신청 시에만 개별 과목 결제 페이지로 이동
-    if (selectedType === "individual" && selectedProgram?.storeUrl) {
-      setTimeout(() => {
-        window.open(selectedProgram.storeUrl, "_blank");
-      }, 1500);
-    }
+    // 개별 신청은 토스 결제창에서 끝난다 (스토어로 보내지 않는다)
     handleClose();
   };
 
@@ -104,7 +99,7 @@ export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: Appli
                 <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
                   <li>• 여러 명의 정보를 엑셀로 업로드</li>
                   <li>• 템플릿 파일 제공</li>
-                  <li>• 대량 신청 처리</li>
+                  <li>• 인원수만큼 한 번에 결제</li>
                 </ul>
                 <Button className="w-full mt-4 bg-red-600 hover:bg-red-700">
                   <Upload className="w-4 h-4 mr-2" />
@@ -141,32 +136,16 @@ export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: Appli
             </div>
             <BulkUpload 
               onSuccess={handleBulkSuccess} 
-              program={{ title: selectedProgram?.title || "", id: selectedProgram?.id || "", storeUrl: selectedProgram?.storeUrl || "" }}
+              program={{
+                title: selectedProgram?.title || "",
+                id: selectedProgram?.id || "",
+                storeUrl: selectedProgram?.storeUrl || "",
+                price: (selectedProgram as SecondaryProgram | null)?.price,
+              }}
             />
           </div>
         )}
 
-        {selectedProgram?.storeUrl && (
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-6">
-            <div className="p-4 bg-gray-100 border border-red-600 rounded-lg shadow-sm space-y-3">
-              <p className="text-sm font-bold text-gray-600">
-                결제 안내
-              </p>
-              <p className="text-sm text-gray-600">
-                신청 완료 후 자동으로 BNI Korea Store 결제 페이지로 이동됩니다
-              </p>
-              <div className="flex justify-center">
-                <Button
-                  onClick={() => window.open(selectedProgram.storeUrl!, "_blank")}
-                  className="w-full bg-white hover:bg-gray-50 text-red-600 border border-red-600 hover:border-red-700"
-                >
-                  <ExternalLink className="w-4 h-4 mr-2" />
-                  스토어 결제 페이지 미리보기
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );

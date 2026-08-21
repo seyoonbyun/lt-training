@@ -324,9 +324,11 @@ export class MemStorage implements IStorage {
       }
 
       // Submit to Google Sheets in bulk (개별 신청 방식 사용)
-      try {
-        for (const app of insertApplications) {
-          await googleSheetsService.addApplicationToSheet({
+      // 기록된 행 번호를 applications[i] 에 실어 보낸다 — 일괄 결제 승인 시 그 행들의 J열을 찍어야 한다.
+      for (let i = 0; i < insertApplications.length; i++) {
+        const app = insertApplications[i];
+        try {
+          const sheetRow = await googleSheetsService.addApplicationToSheet({
             programTitle: app.programTitle,
             region: app.region || "",
             chapter: app.chapter || "",
@@ -336,9 +338,11 @@ export class MemStorage implements IStorage {
             participationType: app.participationType || (app.trainingType === "live" ? "실시간 참여" : "녹화본 시청"),
             notes: app.notes || ""
           });
+          (applications[i] as any).sheetRow = sheetRow;
+        } catch (googleError) {
+          // 한 건이 실패해도 나머지는 계속 넣는다. 행 번호가 없는 건은 결제 대상에서 빠진다.
+          console.error(`Failed to add bulk application to Google Sheets (index ${i}, ${app.name}):`, googleError);
         }
-      } catch (googleError) {
-        console.error("Failed to add bulk applications to Google Sheets:", googleError);
       }
 
       return applications;
