@@ -14,7 +14,6 @@ import { Calendar, Clock, User, MapPin, ExternalLink, AlertTriangle, CreditCard,
 import heroImage from "@assets/Image_fx_1755098115275.jpg";
 import heroVideo from "@assets/team_1755249611475.mp4";
 import buildingImage from "@assets/화면 캡처 2025-08-11 232105_1754922103429.png";
-import paymentImagePath from "@assets/화면 캡처 2025-08-13 223230_1755093254727.png";
 
 export default function Home() {
   const [, setLocation] = useLocation();
@@ -84,104 +83,11 @@ export default function Home() {
     return description;
   };
 
-  return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      
-      <main>
-        {/* Hero Section */}
-        <section className="relative min-h-[60vh] md:min-h-[80vh] flex items-center justify-center overflow-hidden">
-          {/* Background Video */}
-          <video
-            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-            autoPlay
-            loop
-            muted
-            playsInline
-          >
-            <source src={heroVideo} type="video/mp4" />
-            {/* Fallback to image if video fails to load */}
-            <div 
-              className="absolute inset-0 w-full h-full"
-              style={{
-                backgroundImage: `url(${heroImage})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                backgroundRepeat: 'no-repeat'
-              }}
-            />
-          </video>
-          
-          {/* Dark overlay for better text readability */}
-          <div className="absolute inset-0 bg-black bg-opacity-40 pointer-events-none"></div>
-          
-          {/* Hero Content */}
-          <div className="relative z-10 text-center text-white px-4 max-w-4xl mx-auto">
-            <h1 className="text-5xl md:text-7xl lg:text-8xl font-black mb-6 leading-none tracking-tight" style={{ fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '900' }}>
-              2026 BNI Korea
-              <br />
-              Leadership
-              <br />
-              Training
-            </h1>
-            
-            <div className="space-y-1 text-xs md:text-xs lg:text-sm max-w-lg mx-auto" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
-              <p className="font-medium">
-                BNI Korea Leadership Team : 우리는 함께합니다.
-              </p>
-              <p className="font-normal">
-                혼자서는 할 수 없는 기적같은 성취가 날마다 일어나는 곳.
-              </p>
-              <p className="font-normal">
-                각 전문분야의 최고 전문가 CEO들의 협업 커뮤니티
-              </p>
-              <p className="font-normal mb-4">
-                대한민국에서 비즈니스하는 모두에게 이런 기적이 일상이 되는 그날까지 !
-              </p>
-              <p className="italic text-gray-300 text-xs">
-                a group of expert thinker and doers across a wide range of fields to help share new ideas
-              </p>
-            </div>
-          </div>
-        </section>
+  // 오프라인/온라인을 갈라 배치한다. format 은 서버가 H열(오프라인 장소) 유무로 판정한다.
+  const offlinePrograms = programs.filter((p) => p.format === '오프라인');
+  const onlinePrograms = programs.filter((p) => p.format !== '오프라인');
 
-        {/* Programs Section */}
-        <section className="pt-16 pb-8 bg-background">
-          <div className="container mx-auto px-4">
-            <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4 text-foreground">Business Leadership Program</h2>
-              <div className="text-muted-foreground max-w-4xl mx-auto space-y-4" style={{ fontSize: '17px' }}>
-                <p className="font-semibold">
-                  2026년 병오년 하반기 BNI 코리아 리더를 위해 마련된 비즈니스 리더십 프로그램
-                </p>
-                <p className="text-sm md:text-base">
-                  26년 8/27 (목) 부터 - 9/18 (금) 까지, 총 10일간, 총 27시간 분량의 10개의 세션으로 구성되어있으며<br />
-                  각 트레이닝 종료 후 익일 오후 1시 부터, '온라인 강의실'을 통해 녹화본을 시청하실 수 있습니다.
-                </p>
-                <p className="text-sm">
-                  * 녹화본 영상이 업로드 되는대로, 참가 신청해주신 대표님들(한정)께 '영상 접속(ZOOM) 암호'가 발송됩니다 :)
-                </p>
-              </div>
-            </div>
-
-            {error && (
-              <Alert className="mb-8 bg-red-50 border-red-200">
-                <AlertTriangle className="h-4 w-4 text-red-600" />
-                <AlertDescription className="text-red-700">
-                  프로그램 데이터를 불러오는데 실패했습니다. Google Sheets 연결을 확인해주세요.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {isLoading ? (
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {[...Array(9)].map((_, i) => (
-                  <Skeleton key={i} className="h-[500px] rounded-lg" />
-                ))}
-              </div>
-            ) : (
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {programs.map((program) => (
+  const renderProgramCard = (program: SecondaryProgram) => (
                   <Card key={program.id} className="group hover:shadow-xl hover:shadow-red-100/50 dark:hover:shadow-red-900/20 transition-all duration-300 transform hover:-translate-y-2 hover:scale-[1.02] border border-red-200 dark:border-red-800">
                     <CardHeader className="pb-4">
                       <div className="flex items-start justify-between mb-2">
@@ -397,7 +303,125 @@ export default function Home() {
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+  );
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+      
+      <main>
+        {/* Hero Section */}
+        <section className="relative min-h-[60vh] md:min-h-[80vh] flex items-center justify-center overflow-hidden">
+          {/* Background Video */}
+          <video
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            autoPlay
+            loop
+            muted
+            playsInline
+          >
+            <source src={heroVideo} type="video/mp4" />
+            {/* Fallback to image if video fails to load */}
+            <div 
+              className="absolute inset-0 w-full h-full"
+              style={{
+                backgroundImage: `url(${heroImage})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat'
+              }}
+            />
+          </video>
+          
+          {/* Dark overlay for better text readability */}
+          <div className="absolute inset-0 bg-black bg-opacity-40 pointer-events-none"></div>
+          
+          {/* Hero Content */}
+          <div className="relative z-10 text-center text-white px-4 max-w-4xl mx-auto">
+            <h1 className="text-5xl md:text-7xl lg:text-8xl font-black mb-6 leading-none tracking-tight" style={{ fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '900' }}>
+              2026 BNI Korea
+              <br />
+              Leadership
+              <br />
+              Training
+            </h1>
+            
+            <div className="space-y-1 text-xs md:text-xs lg:text-sm max-w-lg mx-auto" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+              <p className="font-medium">
+                BNI Korea Leadership Team : 우리는 함께합니다.
+              </p>
+              <p className="font-normal">
+                혼자서는 할 수 없는 기적같은 성취가 날마다 일어나는 곳.
+              </p>
+              <p className="font-normal">
+                각 전문분야의 최고 전문가 CEO들의 협업 커뮤니티
+              </p>
+              <p className="font-normal mb-4">
+                대한민국에서 비즈니스하는 모두에게 이런 기적이 일상이 되는 그날까지 !
+              </p>
+              <p className="italic text-gray-300 text-xs">
+                a group of expert thinker and doers across a wide range of fields to help share new ideas
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Programs Section */}
+        <section className="pt-16 pb-8 bg-background">
+          <div className="container mx-auto px-4">
+            <div className="text-center mb-12">
+              <h2 className="text-3xl md:text-4xl font-bold mb-4 text-foreground">Business Leadership Program</h2>
+              <div className="text-muted-foreground max-w-4xl mx-auto space-y-4" style={{ fontSize: '17px' }}>
+                <p className="font-semibold">
+                  2026년 병오년 하반기 BNI 코리아 리더를 위해 마련된 비즈니스 리더십 프로그램
+                </p>
+                <p className="text-sm md:text-base">
+                  26년 8/27 (목) 부터 - 9/18 (금) 까지, 총 10일간, 총 27시간 분량의 10개의 세션으로 구성되어있으며<br />
+                  각 트레이닝 종료 후 익일 오후 1시 부터, '온라인 강의실'을 통해 녹화본을 시청하실 수 있습니다.
+                </p>
+                <p className="text-sm">
+                  * 녹화본 영상이 업로드 되는대로, 참가 신청해주신 대표님들(한정)께 '영상 접속(ZOOM) 암호'가 발송됩니다 :)
+                </p>
+              </div>
+            </div>
+
+            {error && (
+              <Alert className="mb-8 bg-red-50 border-red-200">
+                <AlertTriangle className="h-4 w-4 text-red-600" />
+                <AlertDescription className="text-red-700">
+                  프로그램 데이터를 불러오는데 실패했습니다. Google Sheets 연결을 확인해주세요.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {isLoading ? (
+              <div className="space-y-6">
+                <div className="grid gap-6 md:grid-cols-2">
+                  {[...Array(2)].map((_, i) => (
+                    <Skeleton key={`offline-${i}`} className="h-[500px] rounded-lg" />
+                  ))}
+                </div>
+                <div className="grid gap-6 md:grid-cols-2">
+                  {[...Array(8)].map((_, i) => (
+                    <Skeleton key={`online-${i}`} className="h-[500px] rounded-lg" />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* 오프라인 과목 — 상단 고정. 목록 순서와 무관하게 현장 강의가 먼저 온다 */}
+                {offlinePrograms.length > 0 && (
+                  <div className="grid gap-6 md:grid-cols-2">
+                    {offlinePrograms.map(renderProgramCard)}
+                  </div>
+                )}
+
+                {/* 온라인 과목 — 같은 2열. 8개라 딱 4줄로 떨어진다 */}
+                {onlinePrograms.length > 0 && (
+                  <div className="grid gap-6 md:grid-cols-2">
+                    {onlinePrograms.map(renderProgramCard)}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -428,21 +452,7 @@ export default function Home() {
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <div>
-                    <span><strong>챕터 일괄 신청</strong>은 엑셀 업로드 후 스토어 결제 페이지로 이동합니다. 기재란에 '챕터명/신청인원수' 로 남겨주셔야 결제내역이 매칭됩니다.</span>
-                    <div className="flex items-start gap-4 mt-2">
-                      <div className="flex-1">
-                        <div className="text-xs text-gray-600">※ 작성예시 : 해피/20명</div>
-                      </div>
-                      <div className="flex-shrink-0 hidden md:block">
-                        <img 
-                          src={paymentImagePath} 
-                          alt="일괄 결제 시 기재 방법 참고 이미지"
-                          className="w-[270px] h-auto"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  <span><strong>챕터 일괄 신청</strong>은 명단 엑셀을 올리시면 인원수만큼 한 번에 결제됩니다. 이미 신청된 인원은 자동으로 제외되고 그만큼 금액도 줄어듭니다.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
