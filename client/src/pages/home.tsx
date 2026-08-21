@@ -9,11 +9,255 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { ApplicationTypeModal } from "@/components/application/application-type-modal";
-import { Calendar, Clock, User, MapPin, AlertTriangle, ArrowRight, Monitor, Users } from "lucide-react";
+import { Calendar, Clock, User, MapPin, AlertTriangle, ArrowRight, Monitor, Users, ExternalLink } from "lucide-react";
+import { TRAINING_SUMMARY_URL } from "@shared/site-links";
 import heroImage from "@assets/Image_fx_1755098115275.jpg";
 import heroVideo from "@assets/team_1755249611475.mp4";
 import buildingImage from "@assets/화면 캡처 2025-08-11 232105_1754922103429.png";
+
+/**
+ * 안내 문자·메일 미리보기.
+ *
+ * 실제로 발송되는 본문과 같은 형태를 보여 주되, **값은 가린다** —
+ * 이 페이지는 공개라 VOD 열람비번·강의실 주소를 그대로 실으면
+ * "신청자 개별 안내" 가 무의미해진다.
+ */
+const MASK_PW = "●●●●●●●●";
+const MASK_URL = "bnikorea-joy.notion.site/…";
+
+type SampleKind = "confirm" | "reminder" | "refund" | "refundDone";
+
+const SAMPLE_SMS: Record<SampleKind, string> = {
+  confirm: `[BNI Korea LT Training]
+JOY님, 신청이 완료되었습니다.
+
+▶ LTT : 멤버십 위원회 T.
+일시 : 9/8 (화) 18:00 - 21:00 (3시간)
+참여 : 실시간 LIVE
+강의실 : ${MASK_URL}
+VOD 열람비번 : ${MASK_PW}
+※ 강의 종료 후 같은 강의실에 녹화본이 올라갑니다
+
+※ 취소·환불 : 수강 시작 3일 전까지 전액 환불, 당일·시작 후 환불 불가
+문의 : BNI코리아 내셔널 오피스 02-6261-8838`,
+  reminder: `[BNI Korea LT Training]
+JOY님, 오늘 교육이 진행됩니다.
+
+▶ LTT : 멤버십 위원회 T.
+일시 : 9/8 (화) 18:00 - 21:00 (3시간)
+참여 : 실시간 LIVE
+강의실 : ${MASK_URL}
+VOD 열람비번 : ${MASK_PW}
+※ 강의 종료 후 같은 강의실에 녹화본이 올라갑니다
+
+문의 : BNI코리아 내셔널 오피스 02-6261-8838`,
+  refund: `[BNI Korea LT Training]
+JOY님, 취소·환불 접수가 완료되었습니다.
+
+접수 내역
+· 과목 : LTT : 멤버십 위원회 T.
+· 대상 : JOY
+
+담당자 확인 후 처리 결과를 안내드립니다.
+환불금은 신용카드 승인 취소 후 카드사 정책에 따라 1~2개월,
+계좌이체는 승인 후 5~7영업일 내 입금됩니다.
+
+문의 : BNI코리아 내셔널 오피스 02-6261-8838`,
+  refundDone: `[BNI Korea LT Training]
+JOY님, 요청하신 취소·환불이 처리되었습니다.
+
+취소 내역
+· LTT : 멤버십 위원회 T. - JOY
+
+환불금은 결제 수단에 따라 입금됩니다.
+· 신용카드 : 승인 취소 후 카드사 정책에 따라 1~2개월 소요
+· 계좌이체 : 환불 승인 후 5~7영업일 내 처리
+
+문의 : BNI코리아 내셔널 오피스 02-6261-8838`,
+};
+
+const SAMPLE_MAIL: Record<SampleKind, { subject: string; headline: string; intro: string; rows: [string, string][]; cta?: string; notes: string[] }> = {
+  confirm: {
+    subject: "[BNI Korea LT Training] 신청 완료 안내 — LTT : 멤버십 위원회 T.",
+    headline: "JOY님, 신청이 정상적으로 완료되었습니다.",
+    intro: "BNI Korea LT Training [LTT : 멤버십 위원회 T.] 강의에 신청해 주셔서 감사합니다. 아래 일정과 입장 정보 확인 후 참석 부탁드립니다.",
+    rows: [["일시", "9/8 (화) 18:00 - 21:00 (3시간)"], ["참여", "실시간 LIVE"], ["VOD 열람비번", MASK_PW]],
+    cta: "온라인 강의실 입장",
+    notes: ["강의 종료 후 같은 강의실에 녹화본이 올라갑니다"],
+  },
+  reminder: {
+    subject: "[BNI Korea LT Training] 오늘 교육 안내 — LTT : 멤버십 위원회 T.",
+    headline: "JOY님, 오늘 교육이 진행됩니다.",
+    intro: "오늘 진행되는 BNI Korea LT Training [LTT : 멤버십 위원회 T.] 강의 안내입니다. 아래 일정과 입장 정보를 확인해 주세요.",
+    rows: [["일시", "9/8 (화) 18:00 - 21:00 (3시간)"], ["참여", "실시간 LIVE"], ["VOD 열람비번", MASK_PW]],
+    cta: "온라인 강의실 입장",
+    notes: ["강의 종료 후 같은 강의실에 녹화본이 올라갑니다"],
+  },
+  refund: {
+    subject: "[BNI Korea LT Training] 취소 · 환불 접수 확인",
+    headline: "JOY님, 취소·환불 접수가 완료되었습니다.",
+    intro: "접수하신 내용을 담당자가 확인한 뒤 처리 결과를 안내드립니다.",
+    rows: [["과목", "LTT : 멤버십 위원회 T."], ["대상", "JOY"], ["처리", "담당자 확인 후 안내"]],
+    notes: ["신용카드는 승인 취소 후 1~2개월, 계좌이체는 5~7영업일 내 입금됩니다"],
+  },
+  refundDone: {
+    subject: "[BNI Korea LT Training] 취소 · 환불 처리 완료",
+    headline: "JOY님, 요청하신 취소·환불이 처리되었습니다.",
+    intro: "아래 내역으로 취소 처리되었습니다. 환불금은 결제 수단에 따라 입금됩니다.",
+    rows: [["과목", "LTT : 멤버십 위원회 T."], ["대상", "JOY"], ["환불", "결제 수단에 따라 입금"]],
+    notes: ["신용카드는 승인 취소 후 1~2개월, 계좌이체는 5~7영업일 내 입금됩니다"],
+  },
+};
+
+/**
+ * ⚠ 취소·환불 알림은 **문자만** 나간다(접수 폼 쪽 Apps Script 가 솔라피로만 보낸다).
+ *   샘플에 이메일을 같이 그리면 오지 않는 메일을 약속하는 셈이라 문자만 보여 준다.
+ */
+const SMS_ONLY: SampleKind[] = ["refund", "refundDone"];
+
+function NoticeSample({ kind, label }: { kind: SampleKind; label: string }) {
+  const mail = SAMPLE_MAIL[kind];
+  const smsOnly = SMS_ONLY.includes(kind);
+  return (
+    <div className="mt-4 rounded-md border border-gray-200 bg-gray-50/60 p-3">
+      <p className="mb-3 text-xs font-semibold text-foreground">
+        {label} — 실제 발송 예시{smsOnly ? ' (문자)' : ''}
+      </p>
+      <div className={`grid grid-cols-1 gap-3 ${smsOnly ? '' : 'md:grid-cols-2'}`}>
+        {/* 문자 */}
+        <div className="rounded-md border border-gray-200 bg-white p-3">
+          <p className="mb-2 text-[11px] font-semibold text-muted-foreground">문자 (LMS)</p>
+          <pre className="whitespace-pre-wrap break-words font-sans text-[11px] leading-relaxed text-foreground">
+            {SAMPLE_SMS[kind]}
+          </pre>
+        </div>
+
+        {/* 이메일 */}
+        {!smsOnly && (
+        <div className="rounded-md border border-gray-200 bg-white overflow-hidden">
+          <div className="border-b border-gray-200 px-3 py-2">
+            <p className="text-[11px] font-semibold text-muted-foreground">이메일</p>
+            <p className="mt-1 text-[11px] text-foreground break-words">{mail.subject}</p>
+            <p className="text-[10px] text-muted-foreground">보낸사람 : BNI Korea LT Training &lt;hq@joy-bnikorea.com&gt;</p>
+          </div>
+          <div className="border-t-4 border-[#c41324] p-3">
+            <p className="text-[10px] tracking-wider text-gray-400">BNI Korea LT Training</p>
+            <p className="mt-1 text-[13px] font-bold text-foreground">{mail.headline}</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{mail.intro}</p>
+            <div className="mt-2 rounded border border-gray-200 border-l-[3px] border-l-[#c41324] p-2">
+              <p className="text-[12px] font-bold text-foreground">LTT : 멤버십 위원회 T.</p>
+              <table className="mt-1 text-[11px] leading-relaxed">
+                <tbody>
+                  {mail.rows.map(([k, v]) => (
+                    <tr key={k}>
+                      <td className="pr-3 align-top whitespace-nowrap text-muted-foreground">{k}</td>
+                      <td className="align-top text-foreground">{v}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {mail.cta && (
+                <span className="mt-2 inline-block rounded bg-[#c41324] px-3 py-1.5 text-[11px] font-bold text-white">
+                  {mail.cta} →
+                </span>
+              )}
+              {mail.notes.map((n) => (
+                <p key={n} className="mt-1.5 text-[10px] text-muted-foreground">※ {n}</p>
+              ))}
+            </div>
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              하단에 <strong className="text-foreground">강의 이수 신청</strong> · <strong className="text-foreground">취소 · 환불 접수</strong> 버튼과 취소·환불 규정이 함께 담깁니다.
+            </p>
+          </div>
+        </div>
+        )}
+      </div>
+      <p className="mt-2 text-[10px] text-muted-foreground">
+        {smsOnly
+          ? '※ 취소·환불 안내는 문자로 발송됩니다.'
+          : '※ 메일이 바로 확인이 안되시면 스팸함을 확인해주세요!'}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 신청 안내 Q&A. 예전엔 불릿 7줄을 한 번에 펼쳐 놓았는데 아무도 끝까지 읽지 않아
+ * 묻는 형태로 바꿔 접어 두었다. 문구를 고칠 일이 잦아 화면 밖으로 뺀다.
+ */
+const NOTICE_QA: { q: string; a: React.ReactNode }[] = [
+  {
+    q: "신청은 어떻게 하나요?",
+    a: "위 캘린더에서 일정을 확인하신 뒤 「신청하기」를 눌러 신청서를 작성해 주세요. 신청서 작성 후 이어지는 결제까지 마치셔야 신청이 완료됩니다.",
+  },
+  {
+    q: "여러 과목을 한 번에 신청할 수 있나요?",
+    a: "네. 개별 신청에서 원하시는 과목을 여러 개 함께 고르실 수 있고, 선택하신 과목 합계로 한 번에 결제됩니다.",
+  },
+  {
+    q: "챕터에서 여러 명을 대신 신청하려면?",
+    a: (
+      <>
+        「챕터 일괄 신청」을 이용해 주세요. 과목을 고르시면 그 과목을 수강할 분들의 명단을 적는 칸이 열리고,
+        전체 합계로 한 번에 결제됩니다. 수강자는 <strong className="text-foreground">성명만 필수</strong>이며
+        연락처·이메일은 선택입니다. 다만 연락처·이메일을 남기신 분에게만 안내 문자와 메일이 발송됩니다.
+      </>
+    ),
+  },
+  {
+    q: "일괄 신청 시 지역·챕터는 어떻게 기록되나요?",
+    a: (
+      <>
+        <strong className="text-foreground">결제자 정보에 입력하신 지역·챕터</strong>가 명단 전원의 소속으로 기록됩니다.
+        이미 신청된 분은 해당 과목만 자동으로 제외되고 그만큼 금액도 줄어듭니다.
+      </>
+    ),
+  },
+  {
+    q: "실시간에 참여하지 못하면 어떻게 하나요?",
+    a: (
+      <>
+        모든 세션은 녹화본(VOD) 시청으로도 참여하실 수 있습니다. 일정에 맞는 방식을 택1하여 신청해 주세요.
+        녹화본은 강의 익일부터 온라인 강의실에서 보실 수 있으며, 신청 시 안내 문자·메일이 동일하게 발송됩니다.
+        <NoticeSample kind="confirm" label="결제 완료 안내" />
+      </>
+    ),
+  },
+  {
+    q: "녹화본으로 참여하면 이수 처리는 어떻게 되나요?",
+    a: (
+      <>
+        <strong className="text-foreground">Training Summary 제출이 필수</strong>입니다. 제출하셔야 이수하신 것으로 등록됩니다.
+        위의 「강의 이수 신청」에서 제출해 주세요.
+      </>
+    ),
+  },
+  {
+    q: "온라인 강의실은 어떻게 들어가나요?",
+    a: (
+      <>
+        결제가 완료되면 문자와 이메일로 온라인 강의실 링크와 VOD 열람비번을 보내드립니다.
+        트레이닝 <strong className="text-foreground">당일 오전 10시</strong>에 한 번 더 안내드립니다.
+        <NoticeSample kind="confirm" label="결제 완료 안내" />
+        <NoticeSample kind="reminder" label="트레이닝 당일 안내" />
+      </>
+    ),
+  },
+  {
+    q: "신청을 취소하고 환불받으려면?",
+    a: (
+      <>
+        수강 시작 3일 전까지 요청하시면 전액 환불됩니다. 수강 시작일 당일과 강의 시작 후에는 환불이 불가합니다.
+        페이지 맨 아래 「취소 · 환불 접수」에서 신청해 주세요. 접수되면 확인 안내가 발송되고,
+        담당자 처리가 끝나면 완료 안내를 한 번 더 보내드립니다.
+        <NoticeSample kind="refund" label="① 접수 즉시 — 접수 확인" />
+        <NoticeSample kind="refundDone" label="② 담당자 처리 후 — 환불 완료" />
+      </>
+    ),
+  },
+];
 
 export default function Home() {
   const [, setLocation] = useLocation();
@@ -120,7 +364,40 @@ export default function Home() {
   const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 
   const shortTitle = (title: string) => title.replace(/^LTT\s*:\s*/, '').trim();
-  const shortTime = (time: string) => (time || '').replace(/\s*\(.*?\)\s*/g, '').trim();
+
+  /**
+   * 시간 표기를 `12:00-17:00(5시간)` 한 형태로 맞춘다.
+   * 시트에 `13:00~17:00(4시간)` · `18:00 - 21:00 (3시간)` 처럼 제각각 들어와 있어
+   * 그대로 쓰면 칸마다 모양이 달라진다. 값은 바꾸지 않고 구분자와 공백만 정리한다.
+   */
+  const shortTime = (time: string) =>
+    (time || '')
+      .replace(/\s*[~–—]\s*/g, '-')
+      .replace(/\s*-\s*/g, '-')
+      .replace(/\s*\(\s*/g, '(')
+      .replace(/\s*\)\s*/g, ')')
+      .trim();
+
+  /**
+   * 캘린더 칸에 넣을 이름. 칸이 40~50px 뿐이라 짧게 줄여 **단어별로 줄바꿈**한다.
+   *   `이벤트 코디네이터 T.` → `이벤트` / `코디`
+   *   `멤버십 위원회 T.`     → `멤버십` / `위원회`
+   * 꼬리의 `T.` 는 모든 과목에 붙어 있어 정보가 없으므로 뗀다.
+   */
+  const CHIP_ABBR: [RegExp, string][] = [[/코디네이터/g, '코디']];
+
+  const chipTitleLines = (title: string) => {
+    let clean = shortTitle(title).replace(/\s*T\.?\s*$/, '').trim();
+    for (const [pattern, replacement] of CHIP_ABBR) clean = clean.replace(pattern, replacement);
+
+    // 단어별로 한 줄. 그래도 긴 단어는 3글자씩 끊는다.
+    const lines: string[] = [];
+    for (const word of clean.split(/\s+/).filter(Boolean)) {
+      if (word.length <= 3) lines.push(word);
+      else for (let i = 0; i < word.length; i += 3) lines.push(word.slice(i, i + 3));
+    }
+    return lines;
+  };
 
   const renderCalendar = () => (
     <div className="rounded-lg border border-red-200 dark:border-red-800 bg-card overflow-hidden">
@@ -135,7 +412,7 @@ export default function Home() {
               각 트레이닝 종료 후 익일 오후 1시 부터, '온라인 강의실'을 통해 녹화본을 시청하실 수 있습니다.
             </p>
             <p className="text-xs">
-              * 녹화본 영상이 업로드 되는대로, 참가 신청해주신 대표님들(한정)께 '온라인 강의실 입장 암호'가 발송됩니다 :)
+              * 녹화본 영상이 업로드 되는대로, 참가 신청해주신 대표님들(한정)께 'VOD 열람비번'이 발송됩니다 :)
             </p>
           </div>
         </div>
@@ -170,6 +447,9 @@ export default function Home() {
       <div className="grid grid-cols-7">
         {calendarCells.map((ymd, index) => {
           const daySessions = sessionsByDate.get(ymd) ?? [];
+          const dayFormats = Array.from(
+            new Set(daySessions.map((p) => (p.format === '오프라인' ? '오프라인' : '온라인')))
+          );
           const weekday = index % 7;
           const day = Number(ymd.slice(8));
           const month = Number(ymd.slice(5, 7));
@@ -177,20 +457,32 @@ export default function Home() {
           return (
             <div
               key={ymd}
-              className={`min-h-[84px] md:min-h-[112px] p-1 border-b border-gray-100 dark:border-gray-800 ${
+              className={`flex min-w-0 flex-col overflow-hidden min-h-[72px] md:aspect-[6/5] md:min-h-[88px] p-1 border-b border-gray-100 dark:border-gray-800 ${
                 weekday === 6 ? '' : 'border-r'
               } ${daySessions.length === 0 ? 'bg-gray-50/40 dark:bg-gray-900/20' : ''}`}
             >
-              <div
-                className={`px-1 mb-1 text-[11px] ${
-                  weekday === 0 ? 'text-red-600' : weekday === 6 ? 'text-blue-600' : 'text-muted-foreground'
-                }`}
-              >
-                {/* 달이 바뀌는 1일에만 월을 같이 적어 8월과 9월이 구분된다 */}
-                {day === 1 ? <span className="font-semibold">{month}월 1</span> : day}
+              <div className="flex min-w-0 items-center justify-between gap-1 px-1 mb-1">
+                {/* 월/일을 늘 함께 적는다. 8월과 9월이 한 표에 섞여 있어 일자만으론 헷갈린다 */}
+                <span
+                  className={`${
+                    /* 강의가 있는 날은 날짜부터 눈에 들어와야 한다.
+                       단 모바일에선 칸이 좁아 키우면 오히려 답답해져 그대로 둔다 */
+                    daySessions.length > 0 ? 'text-[11px] md:text-[15px] font-bold' : 'text-[11px]'
+                  } ${
+                    weekday === 0 ? 'text-red-600' : weekday === 6 ? 'text-blue-600' : 'text-muted-foreground'
+                  } ${day === 1 && daySessions.length === 0 ? 'font-semibold' : ''}`}
+                >
+                  {month}/{day}
+                </span>
+                {/* 색만으로는 안 읽히니 그날 세션의 진행 방식을 글자로도 적는다 */}
+                {dayFormats.length > 0 && (
+                  <span className="hidden md:inline shrink-0 text-[10px] font-bold tracking-wide text-red-600">
+                    {dayFormats.join(' · ')}
+                  </span>
+                )}
               </div>
 
-              <div className="space-y-1">
+              <div className="flex flex-1 flex-col gap-1 min-h-0">
                 {daySessions.map((program) => {
                   const isOffline = program.format === '오프라인';
                   const closed = !program.isAvailable || isApplicationClosed(program.title);
@@ -201,18 +493,36 @@ export default function Home() {
                       type="button"
                       onClick={() => setDetailProgram(program)}
                       title={`${program.sessionNumber} · ${program.title}`}
-                      className={`w-full text-left rounded px-1.5 py-1 leading-tight transition-colors ${
+                      className={`flex w-full min-w-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-hidden text-center rounded px-1 py-1 md:px-1.5 md:py-1.5 leading-tight transition-colors ${
                         isOffline
                           ? 'bg-red-600 text-white hover:bg-red-700'
                           : 'border border-red-400 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40'
                       } ${closed ? 'opacity-50' : ''}`}
                     >
-                      <span className="block text-[10px] md:text-xs font-semibold truncate">
+                      {/*
+                        모바일은 한 칸이 40~50px 뿐이다. 자르지 말고 칸 폭에 맞춰 줄바꿈한다.
+                        한글은 기본 규칙으로는 잘 안 꺾여서 break-all 로 글자 단위로 끊는다
+                        (`파운데이션` → `파운` / `데이션`).
+                      */}
+                      <span className="md:hidden block w-full text-[9px] font-bold leading-[1.2]">
+                        {chipTitleLines(program.title).map((line, i) => (
+                          <span key={i} className="block">
+                            {line}
+                          </span>
+                        ))}
+                      </span>
+                      {/* 과목명이 주인공 — 나머지는 한 단계 낮춘다 */}
+                      <span className="hidden md:block w-full min-w-0 text-[15px] font-extrabold leading-snug truncate">
                         {shortTitle(program.title)}
                       </span>
-                      <span className="hidden md:block text-[10px] opacity-80 truncate">
+                      <span className="hidden md:block w-full min-w-0 text-[11px] opacity-80 truncate">
                         {shortTime(program.time)}
                       </span>
+                      {program.instructor && (
+                        <span className="hidden md:block w-full min-w-0 text-[11px] opacity-70 truncate">
+                          {program.instructor}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -287,7 +597,7 @@ export default function Home() {
             </div>
             <div>2차: VOD 녹화본 (익일 오후1시)</div>
             <div className="pt-1 border-t border-red-300">
-              ※ 온라인 강의실 입장 PW: 신청자 개별 안내
+              ※ VOD 열람비번 : 신청자 개별 안내
             </div>
           </div>
         )}
@@ -316,7 +626,7 @@ export default function Home() {
               <span>(VOD : 익일 오후3시 업로드)</span>
             </div>
             <div className="pt-1 border-t border-red-300">
-              ※ 온라인 강의실 입장 PW: 신청자 개별 안내
+              ※ VOD 열람비번 : 신청자 개별 안내
             </div>
           </div>
         )}
@@ -474,68 +784,58 @@ export default function Home() {
                     <br />
                     ※ 신청자 카운트 = 결제완료 기준
                   </p>
+
+                  {/* 이수 신청 — Training Summary 제출처. 신청 CTA 와 성격이 달라 톤을 낮춘다 */}
+                  <a
+                    href={TRAINING_SUMMARY_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center w-full h-12 rounded-md border border-red-600 px-6 text-base font-semibold text-red-600 hover:bg-red-600 hover:text-white transition-colors"
+                  >
+                    강의 이수 신청
+                    <ExternalLink className="w-4 h-4 ml-2" />
+                  </a>
                 </div>
               </div>
             )}
           </div>
         </section>
-        {/* VOD 참여자 설문 제출 카드 */}
+        {/* 안내 — 자주 묻는 것을 아코디언으로. 한 화면에 다 늘어놓으면 아무도 안 읽는다 */}
         <section className="pb-8">
           <div className="container mx-auto px-4">
-            <div className="bg-card dark:bg-card text-card-foreground rounded-lg shadow-sm border border-red-200 dark:border-red-800 p-6 hover:shadow-xl hover:shadow-red-100/50 dark:hover:shadow-red-900/20 transition-all duration-300 transform hover:-translate-y-2 hover:scale-[1.02]">
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="h-4 w-4 text-white" />
+            <div className="rounded-lg border border-red-200 bg-gray-50/70 p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <AlertTriangle className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg">신청 안내</h3>
+                  <p className="text-sm text-muted-foreground">리더십 트레이닝 참가 전 확인해 주세요</p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-semibold text-black text-lg">공지</h3>
-                <p className="text-sm text-black">리더십 트레이닝 참가자 필수 사항</p>
-              </div>
-            </div>
-            
-            <div className="space-y-4">
-              <ul className="space-y-3 text-sm text-black">
-                <li className="flex items-start gap-2">
-                  <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span>2026년 하반기 리더십 트레이닝이 시작됩니다. 각 세션별 일정과 장소 확인하시고 미리 신청해주세요.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span>모든 트레이닝의 참가신청은 신청서 작성 후 이어지는 결제까지 마치셔야 완료됩니다.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span><strong>개별 신청</strong>은 원하시는 과목을 여러 개 함께 고르실 수 있고, 선택하신 과목 합계로 한 번에 결제됩니다.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span><strong>챕터 일괄 신청</strong>은 한 분이 여러 명을 대신 신청하는 방식입니다. 과목을 고르시면 그 과목을 수강할 분들의 명단을 적는 칸이 열리고, 전체 합계로 한 번에 결제됩니다. 수강자는 <strong>성명만 필수</strong>이며 연락처·이메일은 선택입니다.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span>일괄 신청 시 <strong>지역·챕터는 결제자 정보에 입력하신 값</strong>이 명단 전원의 소속으로 기록됩니다. 이미 신청된 분은 해당 과목만 자동으로 제외되고 그만큼 금액도 줄어듭니다.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span>모든 세션은 녹화본 시청으로도 참여가능합니다. 일정에 맞는 방식을 택1하여 참여해주세요.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
-                  <span><strong>VOD 참여자 설문 제출 필수</strong> : 녹화본 시청으로 참여하시는 경우, Training Summary를 제출하셔야 이수하신 것으로 등록됩니다.</span>
-                </li>
-              </ul>
-              
-              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                <a 
-                  href="https://apply-bnikorea.com/" 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="inline-flex items-center justify-center w-full px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors duration-200"
-                >
-                  📝 Summary 제출하고 리더십팀 트레이닝 이수 완료 하기 !
-                </a>
-              </div>
-            </div>
+
+              {/* 항목마다 카드로 띄운다. 줄만 그으면 어디를 눌러야 할지 안 보인다 */}
+              <Accordion type="single" collapsible className="w-full space-y-2.5">
+                {NOTICE_QA.map((qa, i) => (
+                  <AccordionItem
+                    key={qa.q}
+                    value={`qa-${i}`}
+                    className="rounded-lg border border-gray-200 bg-white shadow-sm transition-all hover:shadow-md hover:border-red-300 data-[state=open]:border-red-400 data-[state=open]:shadow-md"
+                  >
+                    <AccordionTrigger className="px-4 py-3.5 text-left text-sm font-semibold hover:no-underline [&[data-state=open]>svg]:text-red-600">
+                      <span className="flex items-start gap-2.5">
+                        <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-red-50 text-[11px] font-bold text-red-600">
+                          Q
+                        </span>
+                        <span>{qa.q}</span>
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
+                      <div className="border-t border-gray-100 pt-3">{qa.a}</div>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
             </div>
           </div>
         </section>
