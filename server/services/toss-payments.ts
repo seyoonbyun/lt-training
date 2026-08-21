@@ -29,6 +29,13 @@ export interface PendingOrder {
   quantity?: number;
   /** sheetRows 와 같은 순서의 행별 금액. 과목마다 단가가 달라도 정확히 기록된다 */
   rowAmounts?: number[];
+  /**
+   * 결제 승인 뒤 참여 링크 문자를 보낼 대상. sheetRows 와 같은 순서.
+   * 개별 신청이면 신청자 본인이 과목 수만큼, 일괄 신청이면 수강자 명단이 들어온다.
+   */
+  recipients?: Array<{ name: string; phone: string; email?: string; programTitle: string; trainingType: string }>;
+  /** 일괄(대리) 신청의 결제자. 링크 전체를 요약해 한 통 더 보낸다. */
+  payer?: { name: string; phone: string; email?: string };
   status: "pending" | "paid" | "failed";
   paymentKey?: string;
 }

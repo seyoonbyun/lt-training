@@ -158,6 +158,9 @@ export interface SecondaryProgram {
   completedCount?: number; // 결제완료된 신청자 수
   notionUrl?: string; // Notion 링크
   classroomUrl?: string; // 온라인 강의실 URL (I열)
+  zoomUrl?: string; // 실시간(줌) 링크 (J열). 오프라인 과목은 비어 있다
+  classroomPw?: string; // VOD 열람비번 (M열, 선택)
+  venueText?: string; // 오프라인 장소 원문 (H열, '표기 + URL' 형태를 허용)
   venueUrl?: string; // 오프라인 강의실 URL (H열)
   format?: string; // '오프라인' | '온라인' — H열(오프라인 장소) 유무로 서버가 판정
   price?: number; // 시트 L열 단가(원). 실제 청구액은 서버가 다시 계산한다

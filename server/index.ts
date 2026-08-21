@@ -3,6 +3,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static-serve";
 import { maintenance } from "./middleware/maintenance";
+import { startReminderScheduler } from "./services/reminder";
 
 const app = express();
 app.set('trust proxy', true);
@@ -116,6 +117,8 @@ process.on('exit', (code) => {
     host: "0.0.0.0",
   }, () => {
     log(`serving on port ${port}`);
+    // 트레이닝 당일 오전 10시(KST) 참여 안내 리마인드
+    startReminderScheduler();
   });
 
   setInterval(() => {

@@ -12,8 +12,54 @@ import {
   isConfigured as isTossConfigured,
   saveOrder,
 } from "./services/toss-payments";
+import type { PendingOrder } from "./services/toss-payments";
+import { sendEnrollmentNotice } from "./services/enrollment-notify";
+
+/**
+ * 결제 승인 뒤 참여 안내를 문자·이메일로 함께 보낸다.
+ * 링크는 온라인 강의실(세션등록 I열)로 통일한다 — 실시간 입장과 녹화본이 같은 페이지에 있다.
+ * 일괄(대리) 신청은 결제자에게도 링크 전체를 한 통 더 보낸다.
+ *
+ * ⛔ 여기서 나는 오류가 결제 승인 응답을 막으면 안 된다. 전부 잡아 로그만 남긴다.
+ */
+async function sendEnrollmentSms(order: PendingOrder) {
+  return sendEnrollmentNotice({
+    recipients: order.recipients || [],
+    payer: order.payer,
+    kind: "confirm",
+    context: `(주문 ${order.orderId})`,
+  });
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  /**
+   * 안내 메일 미리보기 (개발용). 실제 발송은 하지 않는다.
+   *   /api/dev/notice-preview?title=<과목명>&type=live|recorded&kind=confirm|reminder
+   * 운영에서는 열리지 않는다.
+   */
+  app.get("/api/dev/notice-preview", async (req, res) => {
+    if (process.env.NODE_ENV === "production") return res.status(404).end();
+    try {
+      const { loadProgramMap } = await import("./services/enrollment-notify");
+      const { buildAttendeeMails } = await import("./services/enrollment-email");
+      const byTitle = await loadProgramMap();
+      const programs = await googleSheetsService.getSecondarySheetPrograms();
+      const title = String(req.query.title || (programs as any[])[0]?.title || "");
+      const trainingType = String(req.query.type || "live");
+      const kind = String(req.query.kind || "confirm") === "reminder" ? "reminder" : "confirm";
+      const { mails } = buildAttendeeMails(
+        [{ name: "홍길동", phone: "010-1234-5678", email: "preview@example.com", programTitle: title, trainingType }],
+        byTitle,
+        kind
+      );
+      if (!mails.length) return res.status(404).send("미리보기를 만들지 못했습니다. title 을 확인하세요.");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(mails[0].html);
+    } catch (error: any) {
+      res.status(500).send(String(error?.message || error));
+    }
+  });
+
   // Get all training programs
   app.get("/api/programs", async (req, res) => {
     try {
@@ -272,6 +318,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sheetRow: sheetRows[0],
         sheetRows,
         rowAmounts,
+        // 승인 뒤 참여 링크 문자를 보낼 대상. 개별 신청은 신청자 본인이 과목 수만큼 들어간다.
+        recipients: recorded.map((p: any) => ({
+          name: applicant.name,
+          phone: applicant.phone,
+          email: applicant.email,
+          programTitle: p.title,
+          trainingType: applicant.trainingType || "live",
+        })),
         status: "pending",
       });
 
@@ -404,6 +458,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sheetRows: number[] = [];
       const rowAmounts: number[] = [];
       const recordedTitles: string[] = [];
+      // 실제로 접수된 행만 문자 대상이 된다. 연락처를 안 적은 분은 뒤에서 걸러진다.
+      const recipients: Array<{ name: string; phone: string; email: string; programTitle: string; trainingType: string }> = [];
 
       submitted.forEach((application: any, index: number) => {
         const sheetRow = application?.sheetRow as number | undefined;
@@ -412,6 +468,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sheetRows.push(sheetRow);
         rowAmounts.push(priceByTitle.get(title) || 0);
         recordedTitles.push(title);
+        recipients.push({
+          name: String(validated[index]?.name || "").trim(),
+          phone: String(validated[index]?.phone || "").trim(),
+          email: String(validated[index]?.email || "").trim(),
+          programTitle: title,
+          trainingType: validated[index]?.trainingType || "live",
+        });
       });
 
       if (sheetRows.length === 0) {
@@ -446,6 +509,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sheetRows,
         rowAmounts,
         quantity,
+        recipients,
+        payer: {
+          name: String(payer.name).trim(),
+          phone: String(payer.phone).trim(),
+          email: String(payer.email || "").trim(),
+        },
         status: "pending",
       });
 
@@ -535,6 +604,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // 참여 링크 문자. 실패해도 결제는 유효하므로 응답을 막지 않는다.
+      const smsResult = await sendEnrollmentSms(order);
+
       res.json({
         ok: true,
         orderId: order.orderId,
@@ -543,6 +615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         method: result.method,
         approvedAt: result.approvedAt,
         receiptUrl: result.receiptUrl,
+        sms: smsResult,
       });
     } catch (error) {
       console.error("결제 승인 처리 실패:", error);

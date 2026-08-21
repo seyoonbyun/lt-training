@@ -8,7 +8,7 @@ const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID || "";
 // 모듈 레벨 액세스 토큰 캐시 (스코프별로 구분)
 const _cachedTokens: Map<string, { token: string; expiresAt: number }> = new Map();
 
-async function getServiceAccountAccessToken(scope: string): Promise<string> {
+export async function getServiceAccountAccessToken(scope: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const cached = _cachedTokens.get(scope);
   if (cached && cached.expiresAt > now + 60) {
@@ -560,6 +560,51 @@ export class GoogleSheetsService {
    * 결제 승인이 떨어진 신청 행에 결제 정보를 기록한다.
    * J열 '완료'가 신청자 수 집계의 기준이므로 이 값이 곧 카운트에 반영된다.
    */
+  /**
+   * 신청명단 시트를 그대로 읽는다. 당일 리마인드가 정본으로 삼는 경로.
+   * API 키(읽기 전용)로 충분하고, 캐시를 타지 않는다 — 방금 결제한 행도 보여야 한다.
+   */
+  /**
+   * 취소된 신청인지. 신청명단 **R열(index 17)** 에 값이 있으면 취소다.
+   * 담당자가 취소·환불 접수 응답 시트에서 '환불처리 = 완료' 를 넣으면 스크립트가 여기에 시각을 적는다.
+   *
+   * 집계·중복판정에서 이 행을 빼지 않으면 취소한 사람이 계속 정원에 잡히고
+   * 같은 과목을 다시 신청할 수도 없다.
+   */
+  private isCancelledRow(row: string[]): boolean {
+    return String(row[17] || '').trim().length > 0;
+  }
+
+  async readApplicationRows(range: string): Promise<string[][]> {
+    const url = `${this.baseUrl}/${this.spreadsheetId}/values/${encodeURIComponent(range)}?key=${this.apiKey}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`신청명단 읽기 실패 ${response.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await response.json();
+    return (data.values || []) as string[][];
+  }
+
+  /**
+   * 신청명단의 특정 셀들에 값을 쓴다 (리마인드 발송 표시 등).
+   * 쓰기는 API 키로 못 하므로 서비스 계정 토큰을 쓴다.
+   */
+  async writeApplicationCells(data: Array<{ range: string; values: any[][] }>): Promise<void> {
+    if (!data.length) return;
+    const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets');
+    const url = `${this.baseUrl}/${this.spreadsheetId}/values:batchUpdate`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ valueInputOption: 'RAW', data }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`신청명단 쓰기 실패 ${response.status}: ${text.slice(0, 200)}`);
+    }
+  }
+
   async markApplicationPaid(row: number, info: {
     orderId: string;
     paymentKey: string;
@@ -645,7 +690,8 @@ export class GoogleSheetsService {
 
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
-      const range = encodeURIComponent("'2026 LTT 신청명단'!A:J");
+      // 취소된 신청은 중복으로 보지 않는다 → R열(취소)까지 읽는다.
+      const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
       const url = `${this.baseUrl}/${this.spreadsheetId}/values/${range}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -662,6 +708,7 @@ export class GoogleSheetsService {
         const row = rows[i];
         const rowProgram = row[1] || '';
         const rowPhone = (row[5] || '').replace(/\D/g, '');
+        if (this.isCancelledRow(row)) continue;   // 취소했으면 다시 신청할 수 있어야 한다
         if (rowProgram === programTitle && normalizedPhone && rowPhone === normalizedPhone) {
           return true;
         }
@@ -678,7 +725,8 @@ export class GoogleSheetsService {
 
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
-      const range = encodeURIComponent("'2026 LTT 신청명단'!A:J");
+      // 취소된 신청은 중복으로 보지 않는다 → R열(취소)까지 읽는다.
+      const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
       const url = `${this.baseUrl}/${this.spreadsheetId}/values/${range}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -695,6 +743,7 @@ export class GoogleSheetsService {
         const row = rows[i];
         const rowProgram = row[1] || '';
         const rowPhone = (row[5] || '').replace(/\D/g, '');
+        if (this.isCancelledRow(row)) continue;   // 취소했으면 다시 신청할 수 있어야 한다
         if (rowProgram && rowPhone) {
           existingEntries.add(`${rowProgram}|${rowPhone}`);
         }
@@ -874,6 +923,12 @@ export class GoogleSheetsService {
           location: this.parseLocationFromData(venueLink || onlineLink, title),
           venueUrl: venueUrl,
           classroomUrl: onlineLink || '',
+          // 문자 발송은 둘을 구분해야 한다. 실시간=J열(줌), VOD=I열(강의실).
+          // 오프라인 과목은 J열이 비어 있어 장소(H열)로 안내한다.
+          zoomUrl: String(row[9] || ''),
+          // M열(index 12): VOD 열람비번. 비어 있으면 문자에서 그 줄이 빠진다.
+          classroomPw: String(row[12] || '').trim(),
+          venueText: String(venueLink || ''),
           notionUrl: this.getNotionLink(title)
         };
 
@@ -1342,7 +1397,7 @@ export class GoogleSheetsService {
 
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
-      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:J`;
+      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:R`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -1355,7 +1410,7 @@ export class GoogleSheetsService {
         const row = rows[i];
         const courseName = row[1] || "";
         const paymentStatus = row[9] || "";
-        if (courseName === programTitle && paymentStatus === "완료") {
+        if (courseName === programTitle && paymentStatus === "완료" && !this.isCancelledRow(row)) {
           count++;
         }
       }
@@ -1375,7 +1430,7 @@ export class GoogleSheetsService {
 
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
-      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:J`;
+      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:R`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -1388,7 +1443,7 @@ export class GoogleSheetsService {
         const row = rows[i];
         const courseName = row[1] || "";
         const paymentStatus = row[9] || "";
-        if (courseName && paymentStatus === "완료") {
+        if (courseName && paymentStatus === "완료" && !this.isCancelledRow(row)) {
           counts[courseName] = (counts[courseName] || 0) + 1;
         }
       }
