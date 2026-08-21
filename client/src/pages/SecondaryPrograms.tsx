@@ -169,7 +169,7 @@ export default function SecondaryPrograms() {
         <ApplicationTypeModal
           isOpen={isModalOpen}
           onClose={handleModalClose}
-          selectedProgram={selectedProgram}
+          programs={[selectedProgram]}
         />
       )}
     </div>

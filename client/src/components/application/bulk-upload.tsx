@@ -1,29 +1,36 @@
-import { useState, useRef } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import * as XLSX from "xlsx";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { REGIONS, chaptersOf } from "@/lib/regions";
+import { REGIONS, chaptersOf, OTHER_CHAPTER } from "@/lib/regions";
 import { openTossPayment } from "@/lib/toss-payment";
-import { Upload, Download, FileText, CheckCircle, AlertCircle } from "lucide-react";
+import { Check, Plus, Trash2, Users, Copy } from "lucide-react";
+import type { SecondaryProgram } from "@shared/schema";
 
 interface BulkUploadProps {
+  /** 신청 가능한 전체 과목 */
+  programs: SecondaryProgram[];
   onSuccess?: () => void;
-  program?: {
-    title: string;
-    id: string;
-    storeUrl?: string;
-    /** 시트 L열 단가. 금액 미리보기에만 쓴다 — 실제 청구액은 서버가 다시 계산한다. */
-    price?: number;
-  };
 }
 
-interface ExcelRow {
+/** 명단 한 줄 = 그 과목을 실제로 수강할 사람 */
+interface Attendee {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  participationType: string;
+}
+
+interface ApplicationPayload {
+  programTitle: string;
   region: string;
   chapter: string;
   name: string;
@@ -31,544 +38,475 @@ interface ExcelRow {
   email: string;
   participationType: string;
   notes: string;
-  programTitle: string;
   trainingType: "live" | "recorded";
 }
 
-export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
-  const [file, setFile] = useState<File | null>(null);
+let seq = 0;
+const newAttendee = (): Attendee => ({
+  id: `att-${++seq}`,
+  name: "",
+  phone: "",
+  email: "",
+  participationType: "실시간 참여",
+});
+
+/** 이름이 있어야 한 사람으로 센다. 연락처·이메일은 선택값이다 */
+const isBlank = (attendee: Attendee) => !attendee.name.trim();
+
+export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
+  const [selectedTitles, setSelectedTitles] = useState<string[]>([]);
+  const [rosters, setRosters] = useState<Record<string, Attendee[]>>({});
+  // 결제자가 그 지역·챕터의 대표라, 여기서 받은 소속을 명단 전원에 그대로 쓴다
+  const [payer, setPayer] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    region: "",
+    chapter: "",
+    chapterDirect: false,
+  });
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [results, setResults] = useState<{ success: number; error: number } | null>(null);
-  const [parsedCount, setParsedCount] = useState<number | null>(null);
-  const [payer, setPayer] = useState({ name: "", phone: "", email: "" });
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const uploadMutation = useMutation({
-    mutationFn: async (applications: ExcelRow[]) => {
-      // 명단을 접수하고, 그 인원수만큼의 금액으로 주문을 만든다.
-      // 수량과 금액은 서버가 정한다 — 클라이언트가 보낸 값은 쓰지 않는다.
-      const res = await apiRequest("POST", "/api/payments/prepare-bulk", {
-        applications,
-        payer,
-      });
+  const availablePrograms = useMemo(
+    () => programs.filter((program) => program.isAvailable),
+    [programs]
+  );
+
+  // 화면 순서는 과목 목록 순서를 따른다 (고른 순서가 아니라)
+  const selectedPrograms = availablePrograms.filter((program) => selectedTitles.includes(program.title));
+
+  const rosterOf = (title: string) => rosters[title] ?? [];
+  const countedOf = (title: string) => rosterOf(title).filter((attendee) => !isBlank(attendee));
+
+  const totalEntries = selectedPrograms.reduce((sum, program) => sum + countedOf(program.title).length, 0);
+  const totalAmount = selectedPrograms.reduce(
+    (sum, program) => sum + countedOf(program.title).length * (program.price || 0),
+    0
+  );
+  const distinctPeople = new Set(
+    selectedPrograms.flatMap((program) =>
+      countedOf(program.title).map((attendee) => attendee.phone.replace(/\D/g, "") || attendee.name.trim())
+    )
+  ).size;
+
+  const toggleTitle = (title: string) => {
+    setSelectedTitles((prev) => {
+      if (prev.includes(title)) return prev.filter((t) => t !== title);
+      // 과목을 고르면 빈 수강자 한 줄로 명단을 연다
+      setRosters((current) => (current[title]?.length ? current : { ...current, [title]: [newAttendee()] }));
+      return [...prev, title];
+    });
+  };
+
+  const updateAttendee = (title: string, id: string, patch: Partial<Attendee>) => {
+    setRosters((prev) => ({
+      ...prev,
+      [title]: (prev[title] ?? []).map((attendee) =>
+        attendee.id === id ? { ...attendee, ...patch } : attendee
+      ),
+    }));
+  };
+
+  const addAttendee = (title: string) =>
+    setRosters((prev) => ({ ...prev, [title]: [...(prev[title] ?? []), newAttendee()] }));
+
+  const removeAttendee = (title: string, id: string) =>
+    setRosters((prev) => {
+      const next = (prev[title] ?? []).filter((attendee) => attendee.id !== id);
+      return { ...prev, [title]: next.length > 0 ? next : [newAttendee()] };
+    });
+
+  /** 앞 과목에 적은 명단을 그대로 가져온다 (같은 사람들이 여러 과목을 들을 때) */
+  const copyRosterFrom = (fromTitle: string, toTitle: string) => {
+    const source = rosterOf(fromTitle).filter((attendee) => !isBlank(attendee));
+    if (source.length === 0) {
+      toast({ title: "가져올 명단이 없습니다", description: `${fromTitle}에 먼저 수강자를 입력해주세요.`, variant: "destructive" });
+      return;
+    }
+    setRosters((prev) => ({
+      ...prev,
+      [toTitle]: source.map((attendee) => ({ ...attendee, id: `att-${++seq}` })),
+    }));
+    toast({ title: `${source.length}명을 가져왔습니다` });
+  };
+
+  // ── 제출 ────────────────────────────────────────────────────────────────
+  const submitMutation = useMutation({
+    mutationFn: async (applications: ApplicationPayload[]) => {
+      // 금액과 수량은 서버가 시트에서 다시 계산한다. 클라이언트 값은 쓰이지 않는다.
+      const res = await apiRequest("POST", "/api/payments/prepare-bulk", { applications, payer });
       return res.json();
     },
     onSuccess: async (order: any) => {
-      setResults({ success: order.quantity || 0, error: 0 });
       queryClient.invalidateQueries({ queryKey: ["/api/applications"] });
 
       const skipped = order.skippedDuplicates || [];
       toast({
-        title: `${order.quantity}명 접수 · 결제창을 엽니다`,
-        description: skipped.length > 0
-          ? `이미 신청된 인원은 제외했습니다: ${skipped.join(", ")}
-
-제외분을 뺀 ${order.quantity}명분으로 결제됩니다.`
-          : "결제를 완료하셔야 신청이 확정됩니다.",
+        title: `${order.memberCount || 0}명 · ${order.quantity}건 접수 · 결제창을 엽니다`,
+        description:
+          skipped.length > 0
+            ? `이미 신청된 건은 제외했습니다: ${skipped.join(", ")}\n\n제외분을 뺀 금액으로 결제됩니다.`
+            : "결제를 완료하셔야 신청이 확정됩니다.",
       });
 
       try {
-        // 결제창이 뜨면 토스 도메인으로 넘어가고, 끝나면 /payment/success 로 돌아온다.
         await openTossPayment(order);
       } catch (error: any) {
-        // 사용자가 결제창을 닫은 경우도 여기로 온다.
         toast({
           title: "결제가 진행되지 않았습니다",
           description:
-            error?.message ||
-            "결제창이 닫혔습니다. 신청은 접수되었으나 결제를 완료하셔야 확정됩니다.",
+            error?.message || "결제창이 닫혔습니다. 신청은 접수되었으나 결제를 완료하셔야 확정됩니다.",
           variant: "destructive",
         });
       }
     },
-    onError: async (error: any) => {
+    onError: (error: any) => {
       const isDuplicate = error?.status === 409 || (error?.message && error.message.includes("409"));
-      
-      if (isDuplicate) {
-        toast({
-          title: "접수보류",
-          description: "앗, 대표님, 이미 동일 과목에 신청이 완료되신 것으로 보입니다 !\n\n신청현황 대시보드 > 신청자 명단에서 확인하실 수 있어요 :)",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      let errorBody: any = null;
-      try {
-        const msg = error instanceof Error ? error.message : String(error);
-        const jsonMatch = msg.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          errorBody = JSON.parse(jsonMatch[0]);
-        }
-      } catch {}
-
-      if (errorBody?.type === "validation") {
-        const fieldKoreanMap: Record<string, string> = {
-          "email": "올바른 이메일 주소를 입력해주세요",
-          "phone": "올바른 연락처를 입력해주세요",
-          "name": "멤버명을 입력해주세요",
-          "region": "지역을 입력해주세요",
-          "chapter": "챕터를 입력해주세요",
-          "programTitle": "과목명을 입력해주세요",
-          "participationType": "참여 방식을 입력해주세요",
-        };
-
-        const friendlyMessages: string[] = [];
-        if (errorBody.fields && Array.isArray(errorBody.fields)) {
-          for (const fieldMsg of errorBody.fields) {
-            const fieldName = fieldMsg.split(":")[0]?.trim();
-            friendlyMessages.push(fieldKoreanMap[fieldName] || fieldMsg);
-          }
-        }
-
-        const rowInfo = errorBody.row ? `(${errorBody.row}행) ` : "";
-        const nameInfo = errorBody.name ? `[${errorBody.name}] ` : "";
-
-        toast({
-          title: "일괄 신청 보류",
-          description: `엇, 대표님 ! ${nameInfo}${rowInfo}명단의 양식에 오류가 있어 신청이 보류되었습니다.\n\n${friendlyMessages.length > 0 ? friendlyMessages.join('\n') : errorBody.message}`,
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "일괄 신청 보류",
-          description: "엇, 대표님 ! 명단의 양식에 오류가 있어 신청이 보류되었습니다.\n\n다시 확인 후 시도해주세요.",
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: isDuplicate ? "접수보류" : "일괄 신청 실패",
+        description: isDuplicate
+          ? "명단이 모두 이미 신청 완료된 건으로 보입니다.\n\n신청현황 대시보드 > 신청자 명단에서 확인하실 수 있어요 :)"
+          : error instanceof Error
+            ? error.message
+            : "신청 처리 중 오류가 발생했습니다.",
+        variant: "destructive",
+      });
     },
   });
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = event.target.files?.[0];
-    if (!selectedFile) return;
-
-    setFile(selectedFile);
-    setResults(null);
-    setParsedCount(null);
-
-    // 결제 전에 인원수와 금액을 보여주기 위해 미리 세어 둔다.
-    // 중복 제외는 서버가 하므로 이 값은 최댓값이고, 실제 청구액은 그보다 작거나 같다.
-    try {
-      const rows = await parseExcelFile(selectedFile);
-      setParsedCount(rows.length);
-    } catch {
-      setParsedCount(null);
+  const handleSubmit = async () => {
+    if (selectedPrograms.length === 0) {
+      toast({ title: "과목을 선택해주세요", description: "신청하실 과목을 먼저 고르시면 명단을 적으실 수 있습니다.", variant: "destructive" });
+      return;
     }
-  };
 
-  const parseExcelFile = (file: File): Promise<ExcelRow[]> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: "array" });
-          const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+    const problems: string[] = [];
+    const applications: ApplicationPayload[] = [];
 
-          const applications: ExcelRow[] = jsonData.map((row: any) => {
-            // 과목명 매칭 로직 개선 - 짧은 형태도 인식
-            let matchedProgramTitle = row["과목명"] || program?.title || "선택된 프로그램";
-            
-            if (row["과목명"]) {
-              const inputTitle = row["과목명"].toString().trim();
-              
-              // 과목명 매칭 맵 - 더 유연한 매칭 지원 (짧은 형태 → 전체 형태)
-              const courseMap: Record<string, string> = {
-                // 파운데이션 관련
-                "파운데이션": "LTT : 파운데이션 T.",
-                "Foundation": "LTT : 파운데이션 T.",
-                
-                // 멤버십 위원회 관련
-                "멤버십": "LTT : 멤버십 위원회 T.",
-                "멤버십 위원회": "LTT : 멤버십 위원회 T.",
-                "멤버십위원회": "LTT : 멤버십 위원회 T.",
-                "Membership": "LTT : 멤버십 위원회 T.",
-                
-                // PR 코디네이터 관련
-                "PR": "LTT : PR 코디네이터T.",
-                "PR 코디네이터": "LTT : PR 코디네이터T.",
-                "PR코디네이터": "LTT : PR 코디네이터T.",
-                "피알": "LTT : PR 코디네이터T.",
-                
-                // 교육 코디네이터 관련
-                "교육": "LTT : 교육 코디네이터 T.",
-                "교육 코디네이터": "LTT : 교육 코디네이터 T.",
-                "교육코디네이터": "LTT : 교육 코디네이터 T.",
-                "Education": "LTT : 교육 코디네이터 T.",
-                
-                // 성장 코디네이터 관련
-                "성장": "LTT : 성장 코디네이터 T.",
-                "성장 코디네이터": "LTT : 성장 코디네이터 T.",
-                "성장코디네이터": "LTT : 성장 코디네이터 T.",
-                "Growth": "LTT : 성장 코디네이터 T.",
-                
-                // ST 관련
-                "ST": "LTT : ST T.",
-                "도어퍼슨": "LTT : ST T.",
-                "ST & 도어퍼슨": "LTT : ST T.",
-                "ST&도어퍼슨": "LTT : ST T.",
-                "ST 도어퍼슨": "LTT : ST T.",
-                "에스티": "LTT : ST T.",
-                "ST T.": "LTT : ST T.",
-                "ST & 도어퍼슨 T.": "LTT : ST T.",
-                "LTT : ST & 도어퍼슨 T.": "LTT : ST T.",
-                
-                // 비지터 호스트 관련
-                "비지터": "LTT : 비지터 호스트 T.",
-                "비지터 호스트": "LTT : 비지터 호스트 T.",
-                "비지터호스트": "LTT : 비지터 호스트 T.",
-                "Visitor": "LTT : 비지터 호스트 T.",
-                "호스트": "LTT : 비지터 호스트 T.",
-                
-                // 이벤트 코디네이터 관련
-                "이벤트": "LTT : 이벤트 코디네이터 T.",
-                "이벤트 코디네이터": "LTT : 이벤트 코디네이터 T.",
-                "이벤트코디네이터": "LTT : 이벤트 코디네이터 T.",
-                "Event": "LTT : 이벤트 코디네이터 T.",
-                
-                // 멘토링 코디네이터 관련
-                "멘토링": "LTT : 멘토링 코디네이터 T.",
-                "멘토링 코디네이터": "LTT : 멘토링 코디네이터 T.",
-                "멘토링코디네이터": "LTT : 멘토링 코디네이터 T.",
-                "Mentoring": "LTT : 멘토링 코디네이터 T.",
-                "멘토": "LTT : 멘토링 코디네이터 T.",
-              };
+    selectedPrograms.forEach((program) => {
+      const counted = countedOf(program.title);
+      const short = program.title.replace(/^LTT\s*:\s*/, "");
 
-              // 정확한 매칭 우선, 그 다음 매칭 맵 확인
-              if (courseMap[inputTitle]) {
-                matchedProgramTitle = courseMap[inputTitle];
-              } else {
-                matchedProgramTitle = inputTitle; // 입력한 그대로 사용
-              }
-            }
+      if (counted.length === 0) {
+        problems.push(`${short}: 수강자가 없습니다`);
+        return;
+      }
 
-            // 다양한 열 이름 변형 지원 - 모든 값을 안전하게 문자열로 변환
-            const getColumnValue = (possibleNames: string[]) => {
-              for (const name of possibleNames) {
-                if (row[name] !== null && row[name] !== undefined && row[name] !== "") {
-                  // 숫자, 불린, 객체 등 모든 타입을 안전하게 문자열로 변환
-                  const value = String(row[name]).trim();
-                  if (value.length > 0) {
-                    return value;
-                  }
-                }
-              }
-              return "";
-            };
-
-            // 이메일 필드를 더 안전하게 처리 - undefined, null, 빈 값 모두 빈 문자열로 설정
-            const emailValue = getColumnValue(["이메일", "이메일(체크바람)", "email", "Email", "E-mail", "이메일 주소"]);
-            
-            return {
-              region: getColumnValue(["지역"]),
-              chapter: getColumnValue(["챕터"]),
-              name: getColumnValue(["멤버명", "이름", "성명"]),
-              phone: getColumnValue(["연락처(H.P)", "연락처", "휴대폰", "전화번호"]),
-              email: emailValue === undefined || emailValue === null ? "" : String(emailValue), // undefined, null 처리
-              participationType: getColumnValue(["참여 방식", "참여방식"]) || "실시간 참여",
-              notes: getColumnValue(["특이사항 & 문의", "특이사항", "문의사항", "비고"]) || "", // 빈 문자열로 기본값 설정
-              programTitle: matchedProgramTitle,
-              trainingType: (getColumnValue(["참여 방식", "참여방식"]) || "실시간 참여").includes("실시간") ? "live" : "recorded",
-            };
-          });
-
-          resolve(applications);
-        } catch (error) {
-          reject(new Error("엑셀 파일 파싱에 실패했습니다."));
+      // 이름 없이 연락처만 적힌 줄은 조용히 빠지므로 짚어준다
+      rosterOf(program.title).forEach((attendee, index) => {
+        if (!attendee.name.trim() && (attendee.phone.trim() || attendee.email.trim())) {
+          problems.push(`${short} ${index + 1}번: 수강자 성명 누락`);
         }
-      };
-      reader.onerror = () => reject(new Error("파일 읽기에 실패했습니다."));
-      reader.readAsArrayBuffer(file);
-    });
-  };
+      });
 
-  const handleUpload = async () => {
-    if (!file) {
+      counted.forEach((attendee) => {
+        applications.push({
+          programTitle: program.title,
+          region: payer.region,
+          chapter: payer.chapter.trim(),
+          name: attendee.name.trim(),
+          phone: attendee.phone.trim(),
+          email: attendee.email.trim(),
+          participationType: attendee.participationType,
+          notes: "",
+          trainingType: attendee.participationType.includes("실시간") ? "live" : "recorded",
+        });
+      });
+    });
+
+    if (problems.length > 0) {
       toast({
-        title: "파일 선택 필요",
-        description: "업로드할 엑셀 파일을 선택해주세요.",
+        title: "명단을 확인해주세요",
+        description:
+          problems.slice(0, 4).join("\n") + (problems.length > 4 ? `\n...그 외 ${problems.length - 4}건` : ""),
         variant: "destructive",
       });
       return;
     }
 
-    if (!payer.name.trim() || !payer.phone.trim()) {
+    if (!payer.name.trim() || !payer.phone.trim() || !payer.email.trim()) {
       toast({
         title: "결제자 정보 필요",
-        description: "결제하시는 분의 성명과 연락처를 입력해주세요. 영수증과 결제 문의에 쓰입니다.",
+        description: "결제하시는 분의 성명·연락처·이메일을 입력해주세요. 영수증과 결제 문의에 쓰입니다.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payer.email.trim())) {
+      toast({
+        title: "이메일을 확인해주세요",
+        description: "결제 영수증이 가는 주소입니다. 올바른 이메일 주소를 입력해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!payer.region || !payer.chapter.trim()) {
+      toast({
+        title: "소속 정보 필요",
+        description: "결제자 정보에 지역과 챕터를 입력해주세요. 명단 전원의 소속으로 기록됩니다.",
         variant: "destructive",
       });
       return;
     }
 
     setIsProcessing(true);
-    setProgress(0);
-
+    setProgress(40);
     try {
-      setProgress(25);
-      const applications = await parseExcelFile(file);
-      
-      setProgress(50);
-      
-      // Validate required fields with detailed error information
-      const invalidRows: { index: number; missing: string[] }[] = [];
-      
-      applications.forEach((app, index) => {
-        const missing: string[] = [];
-        if (!app.programTitle || app.programTitle.trim() === "") missing.push("과목명");
-        if (!app.name || app.name.trim() === "") missing.push("멤버명");
-        if (!app.phone || app.phone.trim() === "") missing.push("연락처");
-        const region = (app.region || "").trim();
-        if (!region) {
-          missing.push("지역");
-        } else if (!REGIONS.includes(region)) {
-          missing.push(`지역(${app.region} → 허용: ${REGIONS.join(', ')})`);
-        }
-
-        const chapter = (app.chapter || "").trim();
-        if (!chapter) {
-          missing.push("챕터");
-        } else if (REGIONS.includes(region) && !chaptersOf(region).includes(chapter)) {
-          // 코어 그룹 등 목록에 없는 챕터일 수 있어 막지 않고 경고만 남긴다
-          console.warn(`⚠ ${region} 지역 챕터 목록에 없는 값: ${chapter}`);
-        }
-        // 이메일은 선택사항이므로 검증에서 제외
-        
-        if (missing.length > 0) {
-          invalidRows.push({ index: index + 2, missing }); // +2 because Excel rows start at 1 and have header
-        }
-      });
-
-      if (invalidRows.length > 0) {
-        const errorDetails = invalidRows.slice(0, 3).map(row => 
-          `${row.index}행: ${row.missing.join(', ')} 누락`
-        ).join('\n');
-        
-        const moreRows = invalidRows.length > 3 ? `\n...그 외 ${invalidRows.length - 3}개 행 더` : '';
-        
-        throw new Error(`필수 정보가 누락된 ${invalidRows.length}개 행이 있습니다:\n\n${errorDetails}${moreRows}\n\n※ 필수 항목: 과목명, 지역, 챕터, 멤버명, 연락처\n※ 이메일은 선택 항목입니다`);
-      }
-
-      setProgress(75);
-      await uploadMutation.mutateAsync(applications);
+      await submitMutation.mutateAsync(applications);
       setProgress(100);
-      
-    } catch (error) {
-      toast({
-        title: "일괄 신청 보류",
-        description: error instanceof Error 
-          ? `엇, 대표님 ! 명단의 양식에 오류가 있어 신청이 보류되었습니다.\n\n${error.message}`
-          : "엇, 대표님 ! 명단의 양식에 오류가 있어 신청이 보류되었습니다.\n\n다시 확인 후 시도해주세요.",
-        variant: "destructive",
-      });
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const downloadTemplate = () => {
-    // Google Sheets A-H 열 구조에 정확히 맞는 템플릿 생성 (A열에 과목명 추가됨)
-    // 여러 과목을 동시에 신청할 수 있도록 다양한 과목 예시 포함
-    const template = [
-      {
-        "과목명": "LTT : 파운데이션 T.",
-        "지역": "강남",
-        "챕터": "엑설런트",
-        "멤버명": "차은우",
-        "연락처(H.P)": "010-1234-5678",
-        "이메일": "member1@example.com",
-        "참여 방식": "실시간 참여",
-        "특이사항 & 문의": "오후 시간 선호"
-      },
-      {
-        "과목명": "LTT : 멤버십 위원회 T.",
-        "지역": "강남",
-        "챕터": "해피",
-        "멤버명": "박보검",
-        "연락처(H.P)": "010-1111-2222",
-        "이메일": "",
-        "참여 방식": "녹화본 시청",
-        "특이사항 & 문의": "이메일 없음 (선택사항)"
-      },
-      {
-        "과목명": "LTT : PR 코디네이터T.",
-        "지역": "송파",
-        "챕터": "트라이브",
-        "멤버명": "변우석",
-        "연락처(H.P)": "010-9876-5432",
-        "이메일": "member3@example.com",
-        "참여 방식": "실시간 참여",
-        "특이사항 & 문의": "저녁 시간 희망"
-      },
-      {
-        "과목명": "LTT : 교육 코디네이터 T.",
-        "지역": "인천1",
-        "챕터": "히어로",
-        "멤버명": "추정우",
-        "연락처(H.P)": "010-3333-4444",
-        "이메일": "member4@example.com",
-        "참여 방식": "녹화본 시청",
-        "특이사항 & 문의": "기타 등등"
-      },
-      {
-        "과목명": "LTT : 성장 코디네이터 T.",
-        "지역": "강남",
-        "챕터": "스마트",
-        "멤버명": "한소희",
-        "연락처(H.P)": "010-5555-6666",
-        "이메일": "member5@example.com",
-        "참여 방식": "실시간 참여",
-        "특이사항 & 문의": "온종일 가능"
-      },
-      {
-        "과목명": "LTT : ST T.",
-        "지역": "용인",
-        "챕터": "오렌지",
-        "멤버명": "정해인",
-        "연락처(H.P)": "010-1234-5679",
-        "이메일": "member6@example.com",
-        "참여 방식": "실시간 참여",
-        "특이사항 & 문의": "확인 후 최대한"
-      },
-      {
-        "과목명": "LTT : 비지터 호스트 T.",
-        "지역": "성동",
-        "챕터": "포레스트",
-        "멤버명": "이도현",
-        "연락처(H.P)": "010-1111-2223",
-        "이메일": "member7@example.com",
-        "참여 방식": "실시간 참여",
-        "특이사항 & 문의": "확인 후 최대한"
-      },
-      {
-        "과목명": "LTT : 이벤트 코디네이터 T.",
-        "지역": "대전",
-        "챕터": "라온",
-        "멤버명": "박서준",
-        "연락처(H.P)": "010-9876-5433",
-        "이메일": "member8@example.com",
-        "참여 방식": "실시간 참여",
-        "특이사항 & 문의": "방영될 수 있는도록"
-      },
-      {
-        "과목명": "LTT : 멘토링 코디네이터 T.",
-        "지역": "고양",
-        "챕터": "선샤인",
-        "멤버명": "공유",
-        "연락처(H.P)": "010-3333-4445",
-        "이메일": "member9@example.com",
-        "참여 방식": "실시간 참여",
-        "특이사항 & 문의": "하겠습니다 :)"
-      }
-    ];
-
-    const ws = XLSX.utils.json_to_sheet(template);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "신청자목록");
-    XLSX.writeFile(wb, "BNI_LTT_2026_일괄신청_템플릿 (제공된 작성예시대로 기재해주세요).xlsx");
-  };
+  const chapterSelect = (
+    region: string,
+    chapter: string,
+    direct: boolean,
+    onChange: (patch: { chapter?: string; chapterDirect?: boolean }) => void,
+    placeholder = "챕터 *"
+  ) =>
+    direct ? (
+      <div className="flex gap-2">
+        <Input
+          placeholder="챕터명 직접 입력 *"
+          value={chapter}
+          onChange={(e) => onChange({ chapter: e.target.value })}
+        />
+        <Button type="button" variant="outline" size="sm" onClick={() => onChange({ chapterDirect: false, chapter: "" })}>
+          목록
+        </Button>
+      </div>
+    ) : (
+      <Select
+        value={chapter}
+        disabled={!region}
+        onValueChange={(value) =>
+          value === OTHER_CHAPTER ? onChange({ chapterDirect: true, chapter: "" }) : onChange({ chapter: value })
+        }
+      >
+        <SelectTrigger>
+          <SelectValue placeholder={region ? placeholder : "지역을 먼저 선택"} />
+        </SelectTrigger>
+        <SelectContent>
+          {(region ? chaptersOf(region) : []).map((name) => (
+            <SelectItem key={name} value={name}>
+              {name}
+            </SelectItem>
+          ))}
+          <SelectItem value={OTHER_CHAPTER}>{OTHER_CHAPTER}</SelectItem>
+        </SelectContent>
+      </Select>
+    );
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Upload className="w-5 h-5" />
-            <span>일괄 신청 업로드</span>
+    <div className="max-w-4xl mx-auto space-y-6">
+      <Card className="border-red-200 dark:border-red-800">
+        <CardHeader className="bg-red-600" style={{ backgroundColor: "#dc2626" }}>
+          <CardTitle className="flex items-center gap-2 text-white" style={{ color: "#ffffff" }}>
+            <Users className="w-5 h-5" />
+            일괄 신청
           </CardTitle>
-          <CardDescription>
-            엑셀 파일을 업로드하여 여러 명의 신청을 한번에 처리하세요.
+          <CardDescription className="text-white" style={{ color: "#ffffff" }}>
+            과목을 고르고, 그 수업을 실제로 들으실 분들을 적어주세요. 결제하시는 분과 달라도 됩니다.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">1. 템플릿 다운로드</span>
-              <Button onClick={downloadTemplate} variant="outline" size="sm">
-                <Download className="w-4 h-4 mr-2" />
-                템플릿 다운로드
-              </Button>
-            </div>
-            
-            <Alert>
-              <FileText className="h-4 w-4" />
-              <AlertDescription>
-                <div className="space-y-2">
-                  <p><strong>템플릿 사용법:</strong></p>
-                  <ul className="list-disc list-inside space-y-1 text-sm">
-                    <li><strong>여러 과목 동시 신청 가능:</strong> 파운데이션 10명 + 성장 코디네이터 7명 등</li>
-                    <li><strong>"과목명" 컬럼 활용:</strong> 각 신청자별로 원하는 과목명 입력</li>
-                    <li><strong>필수 정보:</strong> 과목명, 지역, 챕터, 멤버명, 연락처</li>
-                    <li><strong>지역:</strong> {REGIONS.join(', ')} 중 택1</li>
-                    <li><strong>챕터:</strong> 해당 지역에 속한 챕터명 (예: 강남 → 엑설런트)</li>
-                    <li className="text-red-600 font-medium"><strong>이메일 정보는 모르시면 빈칸으로 두고 업로드 해주시면 됩니다</strong></li>
-                    <li><strong>참여 방식:</strong> "실시간 참여" 또는 "녹화본 시청"</li>
-                  </ul>
-                </div>
-              </AlertDescription>
-            </Alert>
-          </div>
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">2. 파일 업로드</span>
-              {parsedCount !== null && (
-                <span className="text-sm text-gray-600">명단 {parsedCount}명</span>
-              )}
-            </div>
-            
-            <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center">
-              <Input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              
-              {file ? (
-                <div className="space-y-2">
-                  <FileText className="w-8 h-8 mx-auto text-green-600" />
-                  <p className="text-sm font-medium">{file.name}</p>
-                  <p className="text-xs text-gray-500">
-                    {(file.size / 1024).toFixed(1)} KB
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Upload className="w-8 h-8 mx-auto text-gray-400" />
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    클릭하여 파일을 선택하거나 여기에 드래그하세요
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Excel 파일만 지원됩니다 (.xlsx, .xls)
-                  </p>
-                </div>
-              )}
-              
-              <Button
-                onClick={() => fileInputRef.current?.click()}
-                variant="outline"
-                className="mt-4"
-              >
-                파일 선택
-              </Button>
+        <CardContent className="p-6 space-y-6">
+          {/* 1. 과목 선택 */}
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">1. 신청 과목 *</Label>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              {availablePrograms.map((program) => {
+                const checked = selectedTitles.includes(program.title);
+                return (
+                  <button
+                    key={program.id}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={checked}
+                    onClick={() => toggleTitle(program.title)}
+                    className={`flex items-start gap-2 rounded-md border p-3 text-left transition-colors ${
+                      checked
+                        ? "border-red-600 bg-red-50 dark:bg-red-950/30"
+                        : "border-gray-200 dark:border-gray-700 hover:border-red-300"
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-sm border ${
+                        checked ? "border-red-600 bg-red-600 text-white" : "border-gray-300 dark:border-gray-600"
+                      }`}
+                    >
+                      {checked && <Check className="h-3 w-3" />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium truncate">{program.title}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {program.date} · {program.time}
+                      </span>
+                      <span className="block text-xs text-red-600">{(program.price || 0).toLocaleString()}원</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
+          {/* 3. 과목별 수강자 명단 */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">3. 결제자 정보</span>
+            <div>
+              <Label className="text-sm font-medium">2. 과목별 수강자 명단 *</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                각 과목을 실제로 수강하실 분입니다. 이수 등록도 이 명단 기준이며, 성명만 필수입니다.
+              </p>
             </div>
-            <p className="text-xs text-gray-500">
-              챕터를 대표해 결제하시는 분입니다. 영수증과 결제 문의에 쓰입니다.
+
+            {selectedPrograms.length === 0 ? (
+              <p className="rounded-md border border-dashed border-gray-300 dark:border-gray-700 py-8 text-center text-sm text-muted-foreground">
+                위에서 과목을 선택하시면 수강자를 입력하실 수 있습니다.
+              </p>
+            ) : (
+              selectedPrograms.map((program, programIndex) => {
+                const roster = rosterOf(program.title);
+                const counted = countedOf(program.title).length;
+                const firstTitle = selectedPrograms[0].title;
+
+                return (
+                  <div
+                    key={program.id}
+                    className="rounded-lg border border-red-200 dark:border-red-800 overflow-hidden"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 bg-red-50 dark:bg-red-950/30 px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{program.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {program.date} · 1인 {(program.price || 0).toLocaleString()}원
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {programIndex > 0 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyRosterFrom(firstTitle, program.title)}
+                          >
+                            <Copy className="w-3.5 h-3.5 mr-1.5" />
+                            첫 과목 명단 가져오기
+                          </Button>
+                        )}
+                        <span className="text-sm font-bold text-red-600 whitespace-nowrap">
+                          {counted}명 · {(counted * (program.price || 0)).toLocaleString()}원
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 space-y-3">
+                      {roster.map((attendee, index) => (
+                        <div key={attendee.id} className="space-y-2">
+                          <div className="flex items-start gap-2">
+                            <span className="mt-2.5 w-6 flex-shrink-0 text-xs text-muted-foreground">
+                              {index + 1}
+                            </span>
+                            <div className="grid flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                              <Input
+                                placeholder="수강자 성명 *"
+                                value={attendee.name}
+                                onChange={(e) => updateAttendee(program.title, attendee.id, { name: e.target.value })}
+                              />
+                              <Input
+                                placeholder="연락처 (선택)"
+                                value={attendee.phone}
+                                onChange={(e) => updateAttendee(program.title, attendee.id, { phone: e.target.value })}
+                              />
+                              <Input
+                                type="email"
+                                placeholder="이메일 (선택)"
+                                value={attendee.email}
+                                onChange={(e) => updateAttendee(program.title, attendee.id, { email: e.target.value })}
+                              />
+                              <Select
+                                value={attendee.participationType}
+                                onValueChange={(value) =>
+                                  updateAttendee(program.title, attendee.id, { participationType: value })
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="실시간 참여">실시간 참여</SelectItem>
+                                  <SelectItem value="녹화본 시청">녹화본 시청</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="mt-0.5"
+                              onClick={() => removeAttendee(program.title, attendee.id)}
+                              aria-label={`${index + 1}번 수강자 삭제`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+
+                        </div>
+                      ))}
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addAttendee(program.title)}
+                        className="w-full"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        수강자 추가
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* 4. 결제자 */}
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">3. 결제자 정보 *</Label>
+            <p className="text-xs text-muted-foreground">
+              챕터를 대표해 결제하시는 분입니다. 결제 영수증은 여기 적으신 이메일로 갑니다.
+              여기 적으신 <strong>지역·챕터가 위 명단 전원의 소속</strong>으로 기록됩니다.
+              이 분이 수강하지 않으셔도 되며, 직접 수강하신다면 위 명단에도 함께 적어주세요.
             </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Select
+                value={payer.region}
+                onValueChange={(value) =>
+                  setPayer((v) => ({ ...v, region: value, chapter: "", chapterDirect: false }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="지역 *" />
+                </SelectTrigger>
+                <SelectContent>
+                  {REGIONS.map((region) => (
+                    <SelectItem key={region} value={region}>
+                      {region}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {chapterSelect(payer.region, payer.chapter, payer.chapterDirect, (patch) =>
+                setPayer((prev) => ({ ...prev, ...patch }))
+              )}
+            </div>
             <div className="grid gap-3 md:grid-cols-3">
               <Input
                 placeholder="결제자 성명 *"
@@ -576,33 +514,32 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
                 onChange={(e) => setPayer((v) => ({ ...v, name: e.target.value }))}
               />
               <Input
-                placeholder="연락처 * (010-1234-5678)"
+                placeholder="결제자 연락처 * (010-1234-5678)"
                 value={payer.phone}
                 onChange={(e) => setPayer((v) => ({ ...v, phone: e.target.value }))}
               />
               <Input
                 type="email"
-                placeholder="이메일 (선택)"
+                placeholder="결제자 이메일 *"
                 value={payer.email}
                 onChange={(e) => setPayer((v) => ({ ...v, email: e.target.value }))}
               />
             </div>
           </div>
 
-          {parsedCount !== null && program?.price ? (
-            <div className="p-4 bg-gray-100 border border-red-600 rounded-lg space-y-1">
-              <p className="text-sm font-bold text-gray-600">결제 금액</p>
-              <p className="text-sm text-gray-600">
-                {parsedCount}명 × {program.price.toLocaleString()}원 ={" "}
-                <strong className="text-red-600">
-                  {(parsedCount * program.price).toLocaleString()}원
-                </strong>
-              </p>
-              <p className="text-xs text-gray-500">
-                ※ 이미 신청된 인원이 있으면 그만큼 빠진 금액으로 결제창이 열립니다.
-              </p>
-            </div>
-          ) : null}
+          {/* 합계 */}
+          <div className="flex items-center justify-between rounded-md bg-gray-50 dark:bg-gray-900/40 px-4 py-3">
+            <span className="text-sm text-muted-foreground">
+              {selectedPrograms.length}과목 · 수강자 {distinctPeople}명 · 신청 {totalEntries}건
+            </span>
+            <span className="text-base font-bold text-red-600">합계 {totalAmount.toLocaleString()}원</span>
+          </div>
+
+          <Alert>
+            <AlertDescription className="text-xs">
+              이미 신청·결제된 분은 해당 과목만 자동으로 제외되고, 그만큼 금액도 줄어든 채로 결제창이 열립니다.
+            </AlertDescription>
+          </Alert>
 
           {isProcessing && (
             <div className="space-y-2">
@@ -614,24 +551,15 @@ export function BulkUpload({ onSuccess, program }: BulkUploadProps) {
             </div>
           )}
 
-          {results && (
-            <Alert className="border-[#059807] bg-[#059807]/10 dark:bg-[#059807]/20">
-              <CheckCircle className="h-4 w-4 text-[#059807]" />
-              <AlertDescription className="text-[#059807] dark:text-[#059807]">
-                {results.success}명 접수되었습니다. 결제를 완료하셔야 신청이 확정됩니다.
-              </AlertDescription>
-            </Alert>
-          )}
-
           <Button
-            onClick={handleUpload}
-            disabled={!file || isProcessing}
+            onClick={handleSubmit}
+            disabled={isProcessing || totalEntries === 0}
             className="w-full bg-red-600 hover:bg-red-700 text-white"
           >
             {isProcessing
               ? "결제창 여는 중..."
-              : parsedCount !== null && program?.price
-                ? `${(parsedCount * program.price).toLocaleString()}원 신청하고 결제하기`
+              : totalEntries > 0
+                ? `${totalEntries}건 ${totalAmount.toLocaleString()}원 결제하기`
                 : "일괄 신청하고 결제하기"}
           </Button>
         </CardContent>

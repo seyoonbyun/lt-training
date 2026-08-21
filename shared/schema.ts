@@ -76,8 +76,9 @@ export const insertApplicationSchema = createInsertSchema(applications).omit({
   }).pipe(z.string())
 });
 
-// 일괄 업로드 전용 스키마 - 이메일을 선택사항으로 처리
+// 일괄 신청 전용 스키마 - 대리 신청이라 수강자 이름만 필수, 연락처·이메일은 선택
 export const insertBulkApplicationSchema = insertApplicationSchema.extend({
+  phone: z.string().optional().transform((val) => (val || "").trim()).pipe(z.string()),
   email: z.string().optional().transform((val) => {
     // undefined, null, 빈 문자열 모두 빈 문자열로 처리
     if (!val || val.trim() === "") {
@@ -160,4 +161,5 @@ export interface SecondaryProgram {
   venueUrl?: string; // 오프라인 강의실 URL (H열)
   format?: string; // '오프라인' | '온라인' — H열(오프라인 장소) 유무로 서버가 판정
   price?: number; // 시트 L열 단가(원). 실제 청구액은 서버가 다시 계산한다
+  formattedDate?: string; // ISO 날짜. 캘린더가 이 값으로 날짜 칸을 정한다
 }

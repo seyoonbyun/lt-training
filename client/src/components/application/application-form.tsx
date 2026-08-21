@@ -22,6 +22,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { openTossPayment, type PreparedOrder } from "@/lib/toss-payment";
+import { Check } from "lucide-react";
 import { REGIONS, chaptersOf, OTHER_CHAPTER } from "@/lib/regions";
 import type { TrainingProgram, SecondaryProgram } from "@shared/schema";
 
@@ -40,16 +41,40 @@ const applicationSchema = z.object({
 type ApplicationFormData = z.infer<typeof applicationSchema>;
 
 interface ApplicationFormProps {
-  program: TrainingProgram | SecondaryProgram | null;
+  /** 신청 가능한 전체 과목. 신청자가 이 중에서 원하는 만큼 고른다 */
+  programs: SecondaryProgram[];
+  /** 캘린더에서 보고 들어온 과목이 있으면 미리 체크해 둔다 */
+  initialTitles?: string[];
   onSuccess?: () => void;
 }
 
-export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
+export function ApplicationForm({ programs, initialTitles = [], onSuccess }: ApplicationFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   // 코어 그룹처럼 목록에 없는 챕터는 '기타'를 골라 직접 입력한다
   const [chapterDirect, setChapterDirect] = useState(false);
+  // 신청서 한 장으로 여러 과목을 담는다. 과목 하나만 골라도, 열 개를 다 골라도 결제는 한 번이다.
+  const [selectedTitles, setSelectedTitles] = useState<string[]>(initialTitles);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const selectablePrograms = programs.filter((program) => program.isAvailable);
+  const selectedPrograms = selectablePrograms.filter((program) => selectedTitles.includes(program.title));
+  const totalAmount = selectedPrograms.reduce((sum, program) => sum + (program.price || 0), 0);
+  const allSelected =
+    selectablePrograms.length > 0 && selectedPrograms.length === selectablePrograms.length;
+
+  const toggleTitle = (title: string) => {
+    setSessionError(null);
+    setSelectedTitles((prev) =>
+      prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title]
+    );
+  };
+
+  const toggleAll = () => {
+    setSessionError(null);
+    setSelectedTitles(allSelected ? [] : selectablePrograms.map((program) => program.title));
+  };
 
   const form = useForm<ApplicationFormData>({
     resolver: zodResolver(applicationSchema),
@@ -66,11 +91,12 @@ export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
 
   const submitMutation = useMutation({
     mutationFn: async (data: ApplicationFormData) => {
-      // 신청 접수와 주문 생성을 한 번에 한다. 금액은 서버가 시트에서 읽으므로 보내지 않는다.
+      // 신청 접수와 주문 생성을 한 번에 한다. 금액은 서버가 시트 L열에서 읽으므로 보내지 않는다.
       const response = await apiRequest("POST", "/api/payments/prepare", {
         ...data,
-        programId: program?.id || "",
-        programTitle: program?.title || "",
+        programId: selectedPrograms[0]?.id || "",
+        programTitle: selectedPrograms[0]?.title || "",
+        programTitles: selectedPrograms.map((program) => program.title),
         trainingType: data.participationType === "실시간 참여" ? "live" : "recorded",
       });
       return (await response.json()) as PreparedOrder;
@@ -111,6 +137,10 @@ export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
   });
 
   const onSubmit = async (data: ApplicationFormData) => {
+    if (selectedPrograms.length === 0) {
+      setSessionError("신청하실 과목을 하나 이상 선택해주세요");
+      return;
+    }
     setIsSubmitting(true);
     try {
       await submitMutation.mutateAsync(data);
@@ -130,18 +160,87 @@ export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
             className="text-white dark:text-white font-bold"
             style={{ color: '#ffffff !important' }}
           >
-            {program?.title || "프로그램"}
+            리더십 트레이닝 신청
           </CardTitle>
           <CardDescription 
             className="text-white dark:text-white"
             style={{ color: '#ffffff !important' }}
           >
-            신청서를 작성해주세요. 모든 필수 항목을 입력해야 합니다.
+            신청하실 과목을 고르고 신청서를 작성해주세요. 여러 과목을 함께 신청하시면 한 번에 결제됩니다.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-6">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+              {/* 과목 선택 — 신청서 한 장으로 여러 과목을 담는다 */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">신청 과목 *</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={toggleAll}
+                    disabled={selectablePrograms.length === 0}
+                  >
+                    {allSelected ? "전체 해제" : "전체 선택"}
+                  </Button>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {selectablePrograms.map((program) => {
+                    const checked = selectedTitles.includes(program.title);
+                    return (
+                      <button
+                        key={program.id}
+                        type="button"
+                        role="checkbox"
+                        aria-checked={checked}
+                        onClick={() => toggleTitle(program.title)}
+                        className={`flex items-start gap-2 rounded-md border p-3 text-left transition-colors ${
+                          checked
+                            ? "border-red-600 bg-red-50 dark:bg-red-950/30"
+                            : "border-gray-200 dark:border-gray-700 hover:border-red-300"
+                        }`}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-sm border ${
+                            checked ? "border-red-600 bg-red-600 text-white" : "border-gray-300 dark:border-gray-600"
+                          }`}
+                        >
+                          {checked && <Check className="h-3 w-3" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium truncate">{program.title}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {program.date} · {program.time}
+                          </span>
+                          <span className="block text-xs text-red-600">
+                            {(program.price || 0).toLocaleString()}원
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectablePrograms.length === 0 && (
+                  <p className="text-sm text-muted-foreground">신청 가능한 과목이 없습니다.</p>
+                )}
+
+                <div className="flex items-center justify-between rounded-md bg-gray-50 dark:bg-gray-900/40 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">
+                    선택 {selectedPrograms.length}과목
+                  </span>
+                  <span className="text-base font-bold text-red-600">
+                    합계 {totalAmount.toLocaleString()}원
+                  </span>
+                </div>
+
+                {sessionError && <p className="text-sm font-medium text-destructive">{sessionError}</p>}
+              </div>
+
               {/* A : 지역 */}
               <FormField
                 control={form.control}
@@ -337,19 +436,16 @@ export function ApplicationForm({ program, onSuccess }: ApplicationFormProps) {
                   disabled={isSubmitting}
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white"
                 >
-                  {isSubmitting ? "결제창 여는 중..." : "신청하고 결제하기"}
+                  {isSubmitting
+                    ? "결제창 여는 중..."
+                    : selectedPrograms.length > 0
+                      ? `${selectedPrograms.length}과목 ${totalAmount.toLocaleString()}원 결제하기`
+                      : "신청하고 결제하기"}
                 </Button>
               </div>
             </form>
           </Form>
 
-          {program && 'paymentLink' in program && program.paymentLink && (
-            <div className="mt-6 p-4 bg-gray-100 border border-red-600 rounded-lg">
-              <p className="text-sm text-gray-600">
-                <strong>결제 안내:</strong> 신청 완료 후 자동으로 결제 페이지로 이동됩니다.
-              </p>
-            </div>
-          )}
         </CardContent>
       </Card>
     </div>

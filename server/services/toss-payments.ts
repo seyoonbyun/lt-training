@@ -27,6 +27,8 @@ export interface PendingOrder {
   sheetRows?: number[];
   /** 일괄 신청 인원수. 금액 = 단가 x quantity */
   quantity?: number;
+  /** sheetRows 와 같은 순서의 행별 금액. 과목마다 단가가 달라도 정확히 기록된다 */
+  rowAmounts?: number[];
   status: "pending" | "paid" | "failed";
   paymentKey?: string;
 }

@@ -162,63 +162,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // 신청 접수 + 주문 생성. 금액은 클라이언트를 믿지 않고 시트에서 읽는다.
+  // 개별 신청도 여러 과목을 한 번에 담을 수 있다 (programTitles). 과목마다 신청 행이
+  // 하나씩 생기고, 결제는 선택한 과목 금액의 합으로 한 번만 일어난다.
   app.post("/api/payments/prepare", applicationSubmitRateLimit, async (req, res) => {
     try {
       if (!isTossConfigured()) {
         return res.status(503).json({ message: "결제 설정이 완료되지 않았습니다. 관리자에게 문의해 주세요." });
       }
 
-      const validatedData = insertApplicationSchema.parse(req.body);
+      // 예전 단일 과목 요청(programTitle)도 그대로 받는다.
+      const requestedTitles: string[] = Array.isArray(req.body?.programTitles) && req.body.programTitles.length > 0
+        ? req.body.programTitles.map((title: any) => String(title || "").trim())
+        : [String(req.body?.programTitle || "").trim()];
+      const titles = Array.from(new Set(requestedTitles.filter(Boolean)));
 
-      const isDuplicate = await googleSheetsService.checkDuplicateApplication(
-        validatedData.programTitle,
-        validatedData.phone,
-        validatedData.name
-      );
-      if (isDuplicate) {
-        return res.status(409).json({ message: "이미 동일 과목에 신청이 완료되었습니다.", duplicate: true });
+      if (titles.length === 0) {
+        return res.status(400).json({ message: "신청하실 과목을 선택해 주세요." });
       }
 
       const programs = await googleSheetsService.getSecondarySheetPrograms();
-      const program = programs.find((p: any) => p.title === validatedData.programTitle);
+      const selected: any[] = [];
 
-      if (!program) {
-        return res.status(400).json({ message: "존재하지 않는 과목입니다." });
+      for (const title of titles) {
+        const program = programs.find((p: any) => p.title === title);
+        if (!program) {
+          return res.status(400).json({ message: `존재하지 않는 과목입니다: ${title}` });
+        }
+        if (!program.isAvailable) {
+          return res.status(409).json({ message: `마감된 과목입니다: ${title}` });
+        }
+        if (!program.price || program.price <= 0) {
+          console.error("❌ 금액 미설정:", title);
+          return res.status(503).json({ message: `결제 금액이 설정되지 않은 과목입니다: ${title}` });
+        }
+        selected.push(program);
       }
-      if (!program.isAvailable) {
-        return res.status(409).json({ message: "마감된 과목입니다." });
+
+      // 과목별로 신청 데이터를 만들어 검증한다. 신청자 정보는 한 벌을 공유한다.
+      const validatedByProgram = selected.map((program: any) =>
+        insertApplicationSchema.parse({
+          ...req.body,
+          programId: program.id,
+          programTitle: program.title,
+        })
+      );
+
+      // 이미 신청한 과목은 빼고 접수한다. 결제 금액도 그만큼 줄어든다.
+      const duplicateTitles: string[] = [];
+      const pending: { program: any; data: any }[] = [];
+
+      for (let i = 0; i < selected.length; i++) {
+        const isDuplicate = await googleSheetsService.checkDuplicateApplication(
+          selected[i].title,
+          validatedByProgram[i].phone,
+          validatedByProgram[i].name
+        );
+        if (isDuplicate) duplicateTitles.push(selected[i].title);
+        else pending.push({ program: selected[i], data: validatedByProgram[i] });
       }
-      if (!program.price || program.price <= 0) {
-        console.error("❌ 금액 미설정:", validatedData.programTitle);
-        return res.status(503).json({ message: "결제 금액이 설정되지 않은 과목입니다. 관리자에게 문의해 주세요." });
+
+      if (pending.length === 0) {
+        return res.status(409).json({
+          message: titles.length === 1
+            ? "이미 동일 과목에 신청이 완료되었습니다."
+            : `선택하신 과목이 모두 이미 신청 완료된 과목입니다: ${duplicateTitles.join(", ")}`,
+          duplicate: true,
+          duplicateTitles,
+        });
       }
 
       // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)은 비어 있어 아직 집계되지 않는다.
-      const application = await storage.submitApplication(validatedData);
-      const sheetRow = (application as any).sheetRow as number | undefined;
+      const sheetRows: number[] = [];
+      const rowAmounts: number[] = [];
+      const recorded: any[] = [];
 
+      for (const item of pending) {
+        const application = await storage.submitApplication(item.data);
+        const sheetRow = (application as any).sheetRow as number | undefined;
+        if (typeof sheetRow === "number" && sheetRow > 1) {
+          sheetRows.push(sheetRow);
+          rowAmounts.push(item.program.price);
+          recorded.push(item.program);
+        } else {
+          console.error("⚠ 신청 행이 기록되지 않았습니다:", item.program.title);
+        }
+      }
+
+      if (sheetRows.length === 0) {
+        console.error("❌ 신청이 시트에 기록되지 않아 결제를 중단합니다:", titles.join(", "));
+        return res.status(500).json({ message: "신청 기록에 실패했습니다. 내셔널 오피스로 문의해 주세요." });
+      }
+
+      const amount = rowAmounts.reduce((sum, price) => sum + price, 0);
+      const orderName = recorded.length === 1
+        ? recorded[0].title
+        : `${recorded[0].title} 외 ${recorded.length - 1}과목`;
+      const applicant = validatedByProgram[0];
       const orderId = createOrderId();
+
       saveOrder({
         orderId,
-        amount: program.price,
-        orderName: program.title,
-        programTitle: program.title,
-        name: validatedData.name,
-        phone: validatedData.phone,
-        email: validatedData.email,
+        amount,
+        orderName,
+        programTitle: recorded.map((p: any) => p.title).join(", "),
+        name: applicant.name,
+        phone: applicant.phone,
+        email: applicant.email,
         createdAt: Date.now(),
-        sheetRow,
+        sheetRow: sheetRows[0],
+        sheetRows,
+        rowAmounts,
         status: "pending",
       });
 
       res.status(201).json({
         orderId,
-        amount: program.price,
-        orderName: program.title,
+        amount,
+        orderName,
         clientKey: getClientKey(),
-        customerName: validatedData.name,
-        customerEmail: validatedData.email,
-        customerMobilePhone: String(validatedData.phone || "").replace(/[^0-9]/g, ""),
+        customerName: applicant.name,
+        customerEmail: applicant.email,
+        customerMobilePhone: String(applicant.phone || "").replace(/[^0-9]/g, ""),
+        sessions: recorded.map((p: any) => ({ title: p.title, price: p.price })),
+        skippedDuplicates: duplicateTitles,
       });
     } catch (error) {
       console.error("결제 준비 실패:", error);
@@ -231,9 +297,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   /**
    * 일괄 신청 결제 준비.
-   * 스토어에서 수량을 손으로 올려 결제하던 것을 대체한다. 수량은 사람이 아니라
-   * 업로드한 명단이 정한다 — 중복 제외 후 실제로 시트에 들어간 인원수가 곧 수량이다.
-   * 금액은 클라이언트를 믿지 않고 서버가 시트 L열(단가) x 인원수로 계산한다.
+   * 한 분이 여러 사람의 신청을 대신한다. 사람마다 과목이 다를 수 있으므로
+   * 행(사람 x 과목)마다 시트 L열 단가를 따로 읽어 합계를 낸다.
+   * 금액은 클라이언트를 믿지 않는다 — 서버가 다시 계산한 값만 청구된다.
    */
   app.post("/api/payments/prepare-bulk", applicationSubmitRateLimit, async (req, res) => {
     try {
@@ -246,41 +312,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!Array.isArray(applications) || applications.length === 0) {
         return res.status(400).json({ message: "신청 명단이 비어 있습니다." });
       }
-      if (!payer || !String(payer.name || "").trim() || !String(payer.phone || "").trim()) {
-        return res.status(400).json({ message: "결제자 성명과 연락처를 입력해 주세요." });
+      const payerEmail = String(payer?.email || "").trim();
+      if (!payer || !String(payer.name || "").trim() || !String(payer.phone || "").trim() || !payerEmail) {
+        return res.status(400).json({ message: "결제자 성명·연락처·이메일을 입력해 주세요." });
+      }
+      // 영수증이 가는 주소라 형식까지 본다
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) {
+        return res.status(400).json({ message: "결제자 이메일 주소가 올바르지 않습니다." });
       }
 
-      const programTitle = String(applications[0]?.programTitle || "").trim();
       const programs = await googleSheetsService.getSecondarySheetPrograms();
-      const program = programs.find((p: any) => p.title === programTitle);
 
-      if (!program) {
-        return res.status(400).json({ message: "존재하지 않는 과목입니다." });
-      }
-      if (!program.isAvailable) {
-        return res.status(409).json({ message: "마감된 과목입니다." });
-      }
-      if (!program.price || program.price <= 0) {
-        console.error("❌ 금액 미설정:", programTitle);
-        return res.status(503).json({ message: "결제 금액이 설정되지 않은 과목입니다. 관리자에게 문의해 주세요." });
+      // 명단에 등장하는 과목을 먼저 전부 확인한다. 하나라도 어긋나면 접수 전에 멈춘다.
+      const requestedTitles = Array.from(
+        new Set(applications.map((app: any) => String(app.programTitle || "").trim()))
+      ).filter(Boolean);
+
+      if (requestedTitles.length === 0) {
+        return res.status(400).json({ message: "신청할 과목이 지정되지 않았습니다." });
       }
 
-      // 이미 신청된 인원은 빼고 접수한다. 결제 금액도 그만큼 줄어든다.
+      const priceByTitle = new Map<string, number>();
+      for (const title of requestedTitles) {
+        const program = programs.find((p: any) => p.title === title);
+        if (!program) {
+          return res.status(400).json({ message: `존재하지 않는 과목입니다: ${title}` });
+        }
+        if (!program.isAvailable) {
+          return res.status(409).json({ message: `마감된 과목입니다: ${title}` });
+        }
+        if (!program.price || program.price <= 0) {
+          console.error("❌ 금액 미설정:", title);
+          return res.status(503).json({ message: `결제 금액이 설정되지 않은 과목입니다: ${title}` });
+        }
+        priceByTitle.set(title, program.price);
+      }
+
+      // 이미 신청된 (사람, 과목)은 빼고 접수한다. 결제 금액도 그만큼 줄어든다.
+      // 중복 판정은 연락처로 한다. 연락처를 안 적은 분은 판정할 수 없으니 그대로 접수한다
+      // (빈 연락처끼리 같은 사람으로 묶여 엉뚱하게 빠지는 것을 막는다).
       const duplicateEntries = await googleSheetsService.checkBulkDuplicates(
-        applications.map((app: any) => ({
-          programTitle: String(app.programTitle || "").trim(),
-          phone: String(app.phone || "").trim(),
-          name: String(app.name || "").trim(),
-        }))
+        applications
+          .filter((app: any) => String(app.phone || "").replace(/\D/g, "").length > 0)
+          .map((app: any) => ({
+            programTitle: String(app.programTitle || "").trim(),
+            phone: String(app.phone || "").trim(),
+            name: String(app.name || "").trim(),
+          }))
       );
       const duplicateKeys = new Set(
         duplicateEntries.map((d: any) => `${d.programTitle}|${d.phone.replace(/\D/g, "")}`)
       );
-      const duplicateNames = duplicateEntries.map((d: any) => d.name);
+      const duplicateNames = duplicateEntries.map((d: any) =>
+        d.programTitle ? `${d.name}(${d.programTitle})` : d.name
+      );
 
       const filtered = applications.filter((app: any) => {
-        const key = `${String(app.programTitle || "").trim()}|${String(app.phone || "").trim().replace(/\D/g, "")}`;
-        return !duplicateKeys.has(key);
+        const normalizedPhone = String(app.phone || "").trim().replace(/\D/g, "");
+        if (!normalizedPhone) return true;
+        return !duplicateKeys.has(`${String(app.programTitle || "").trim()}|${normalizedPhone}`);
       });
 
       if (filtered.length === 0) {
@@ -309,29 +399,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)이 비어 있어 아직 집계되지 않는다.
       const submitted = await storage.bulkSubmitApplications(validated);
-      const sheetRows = submitted
-        .map((a: any) => a.sheetRow as number | undefined)
-        .filter((r): r is number => typeof r === "number" && r > 1);
+
+      // 행 번호와 금액을 같은 순서로 모은다. 과목마다 단가가 달라도 행별로 정확히 기록된다.
+      const sheetRows: number[] = [];
+      const rowAmounts: number[] = [];
+      const recordedTitles: string[] = [];
+
+      submitted.forEach((application: any, index: number) => {
+        const sheetRow = application?.sheetRow as number | undefined;
+        if (typeof sheetRow !== "number" || sheetRow <= 1) return;
+        const title = validated[index]?.programTitle || "";
+        sheetRows.push(sheetRow);
+        rowAmounts.push(priceByTitle.get(title) || 0);
+        recordedTitles.push(title);
+      });
 
       if (sheetRows.length === 0) {
-        console.error("❌ 일괄 신청이 시트에 기록되지 않아 결제를 중단합니다:", programTitle);
+        console.error("❌ 일괄 신청이 시트에 기록되지 않아 결제를 중단합니다:", requestedTitles.join(", "));
         return res.status(500).json({ message: "신청 명단 기록에 실패했습니다. 내셔널 오피스로 문의해 주세요." });
       }
 
       const quantity = sheetRows.length;
-      const amount = program.price * quantity;
+      const amount = rowAmounts.reduce((sum, price) => sum + price, 0);
+      const distinctTitles = Array.from(new Set(recordedTitles));
+      const memberCount = new Set(
+        validated.map(
+          (app: any) => String(app.phone || "").replace(/\D/g, "") || String(app.name || "").trim()
+        )
+      ).size;
+
+      const orderName = distinctTitles.length === 1
+        ? `${distinctTitles[0]} ${quantity}건`
+        : `${distinctTitles[0]} 외 ${quantity - 1}건`;
+
       const orderId = createOrderId("LTT-BULK");
 
       saveOrder({
         orderId,
         amount,
-        orderName: `${program.title} 외 ${quantity}명`,
-        programTitle: program.title,
+        orderName,
+        programTitle: distinctTitles.join(", "),
         name: String(payer.name).trim(),
         phone: String(payer.phone).trim(),
         email: String(payer.email || "").trim(),
         createdAt: Date.now(),
         sheetRows,
+        rowAmounts,
         quantity,
         status: "pending",
       });
@@ -339,13 +452,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json({
         orderId,
         amount,
-        unitPrice: program.price,
         quantity,
-        orderName: `${program.title} 외 ${quantity}명`,
+        memberCount,
+        orderName,
         clientKey: getClientKey(),
         customerName: String(payer.name).trim(),
         customerEmail: String(payer.email || "").trim(),
         customerMobilePhone: String(payer.phone || "").replace(/[^0-9]/g, ""),
+        sessions: distinctTitles.map((title) => ({ title, price: priceByTitle.get(title) || 0 })),
         skippedDuplicates: duplicateNames,
       });
     } catch (error: any) {
@@ -403,14 +517,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 사용자에게 실패로 보이지 않게 하되, 로그로 남겨 수기 보정이 가능하게 한다.
       // 일괄 결제는 한 주문이 여러 행을 덮는다. 한 행이 실패해도 나머지는 계속 찍는다.
       const rowsToMark = order.sheetRows?.length ? order.sheetRows : [order.sheetRow || 0];
-      for (const row of rowsToMark) {
+      for (let i = 0; i < rowsToMark.length; i++) {
+        const row = rowsToMark[i];
+        // 다과목 개별 신청은 행마다 금액이 다를 수 있어 rowAmounts 를 먼저 본다.
+        const rowAmount = order.rowAmounts?.[i]
+          ?? (order.quantity ? order.amount / order.quantity : order.amount);
         try {
           await googleSheetsService.markApplicationPaid(row, {
             orderId: order.orderId,
             paymentKey: String(paymentKey),
             method: result.method,
             approvedAt: result.approvedAt,
-            amount: order.quantity ? order.amount / order.quantity : order.amount,
+            amount: rowAmount,
           });
         } catch (sheetError) {
           console.error(`⚠ 결제는 승인됐으나 시트 기록에 실패했습니다: ${order.orderId} (행 ${row})`, sheetError);

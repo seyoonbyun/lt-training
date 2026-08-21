@@ -16,13 +16,15 @@ import type { TrainingProgram, SecondaryProgram } from "@shared/schema";
 interface ApplicationTypeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  selectedProgram: (TrainingProgram | SecondaryProgram) & { storeUrl?: string } | null;
+  /** 신청 가능한 전체 과목. 개별 신청은 이 중 여러 개를, 일괄 신청은 하나를 고른다 */
+  programs: SecondaryProgram[];
 }
 
 type ApplicationType = "individual" | "bulk" | null;
 
-export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: ApplicationTypeModalProps) {
+export function ApplicationTypeModal({ isOpen, onClose, programs }: ApplicationTypeModalProps) {
   const [selectedType, setSelectedType] = useState<ApplicationType>(null);
+  const availablePrograms = programs.filter((program) => program.isAvailable);
 
   const handleClose = () => {
     setSelectedType(null);
@@ -45,10 +47,10 @@ export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: Appli
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto pt-12 md:pt-6">
         <DialogHeader className="pr-8 md:pr-8 space-y-2">
           <DialogTitle className="text-xl font-bold text-red-600 pr-0 md:pr-4 text-left md:text-center">
-            {selectedProgram?.title || "프로그램"} - 신청 방법 선택
+            리더십 트레이닝 신청 - 신청 방법 선택
           </DialogTitle>
           <DialogDescription className="pr-0 md:pr-4 text-center text-sm text-muted-foreground">
-            신청 방법을 선택해주세요. 개별 신청 또는 엑셀 파일을 통한 일괄 신청이 가능합니다.
+신청 방법을 선택해주세요. 본인 신청은 개별 신청, 여러 명을 대신 신청하시면 일괄 신청입니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -71,8 +73,8 @@ export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: Appli
               <CardContent>
                 <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
                   <li>• 신청자 1명의 정보 입력</li>
-                  <li>• 즉시 결제 페이지 연결</li>
-                  <li>• 빠른 신청 처리</li>
+                  <li>• 원하는 과목을 여러 개 선택 가능</li>
+                  <li>• 선택한 과목 합계로 한 번에 결제</li>
                 </ul>
                 <Button className="w-full mt-4 bg-red-600 hover:bg-red-700">
                   <FileText className="w-4 h-4 mr-2" />
@@ -92,14 +94,14 @@ export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: Appli
                 </div>
                 <CardTitle className="text-lg">일괄 신청</CardTitle>
                 <CardDescription>
-                  엑셀 파일로 여러 명을 한번에 신청합니다
+여러 명의 신청을 대신합니다
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                  <li>• 여러 명의 정보를 엑셀로 업로드</li>
-                  <li>• 템플릿 파일 제공</li>
-                  <li>• 인원수만큼 한 번에 결제</li>
+                  <li>• 과목별로 수강자 명단 입력</li>
+                  <li>• 수강자는 성명만 필수</li>
+                  <li>• 전체 합계로 한 번에 결제</li>
                 </ul>
                 <Button className="w-full mt-4 bg-red-600 hover:bg-red-700">
                   <Upload className="w-4 h-4 mr-2" />
@@ -120,7 +122,7 @@ export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: Appli
                 돌아가기
               </Button>
             </div>
-            <ApplicationForm program={selectedProgram} onSuccess={handleSuccess} />
+            <ApplicationForm programs={availablePrograms} onSuccess={handleSuccess} />
           </div>
         ) : (
           <div className="py-6">
@@ -134,15 +136,7 @@ export function ApplicationTypeModal({ isOpen, onClose, selectedProgram }: Appli
                 돌아가기
               </Button>
             </div>
-            <BulkUpload 
-              onSuccess={handleBulkSuccess} 
-              program={{
-                title: selectedProgram?.title || "",
-                id: selectedProgram?.id || "",
-                storeUrl: selectedProgram?.storeUrl || "",
-                price: (selectedProgram as SecondaryProgram | null)?.price,
-              }}
-            />
+            <BulkUpload programs={availablePrograms} onSuccess={handleBulkSuccess} />
           </div>
         )}
 
