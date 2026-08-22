@@ -22,12 +22,23 @@ import {
   type SmsRecipient,
 } from "./enrollment-notice";
 import type { NoticeKind } from "./enrollment-email";
-import { REFUND_SUMMARY_SHORT } from "../../shared/refund-policy";
+import { REFUND_SUMMARY_SHORT, REFUND_FORM_URL } from "../../shared/refund-policy";
+import { TRAINING_SUMMARY_URL, CS_KAKAO_URL } from "../../shared/site-links";
 
 export type { ProgramInfo, SmsRecipient } from "./enrollment-notice";
 
 const CONTACT = `문의 : ${CONTACT_NAME} ${CONTACT_TEL}`;
 const HEAD = `[${BRAND}]`;
+
+/**
+ * 이메일 카드 아래 보조 버튼 둘과 같은 것.
+ * 문자엔 버튼이 없어 주소를 그대로 싣는다. 라벨은 이메일과 같은 말을 쓴다 —
+ * 두 안내가 다른 말로 같은 것을 가리키면 받는 사람이 다른 절차로 읽는다.
+ */
+const ACTION_LINES = [
+  `강의 이수 신청 : ${TRAINING_SUMMARY_URL}`,
+  `취소 · 환불 접수 : ${REFUND_FORM_URL || CS_KAKAO_URL}`,
+];
 
 function renderBlock(block: NoticeBlock): string {
   const lines = [`▶ ${block.title}`];
@@ -83,7 +94,8 @@ export function buildAttendeeMessages(
       HEAD,
       kind === "reminder" ? `${name}님, 오늘 교육이 진행됩니다.` : `${name}님, 신청이 완료되었습니다.`,
     ].join("\n");
-    return splitBlocks(head, blocks, `※ ${REFUND_SUMMARY_SHORT}\n${CONTACT}`).map((text) => ({
+    const foot = [...ACTION_LINES, `※ ${REFUND_SUMMARY_SHORT}`, CONTACT].join("\n");
+    return splitBlocks(head, blocks, foot).map((text) => ({
       to: phone,
       text,
       label: `${name}(${list.length}과목)`,
@@ -119,6 +131,7 @@ export function buildPayerMessage(
     blocks.join("\n\n"),
     "",
     "※ 연락처를 남긴 수강자에게는 위 안내가 개별 발송되었습니다.",
+    ...ACTION_LINES,
     `※ ${REFUND_SUMMARY_SHORT}`,
     CONTACT,
   ].join("\n");

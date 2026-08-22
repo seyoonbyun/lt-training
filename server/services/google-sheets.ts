@@ -1076,7 +1076,8 @@ export class GoogleSheetsService {
     }
 
     try {
-      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:J?key=${this.apiKey}`;
+      // ⛔ A:J 까지만 읽으면 R열(취소)을 못 본다 — 취소한 신청이 대시보드에 계속 잡힌다.
+      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:R?key=${this.apiKey}`;
       const response = await fetch(url);
 
       if (!response.ok) {
@@ -1258,6 +1259,9 @@ export class GoogleSheetsService {
       }
 
       dataRows.forEach((row: string[], index: number) => {
+        // 취소된 신청은 집계·최근 신청 어디에도 넣지 않는다.
+        // 정원·마감 집계와 같은 기준(R열)을 써야 화면끼리 숫자가 안 어긋난다.
+        if (this.isCancelledRow(row)) return;
         if (row.length >= 5) {
           const submittedAt = row[0] || '';        // A열: 신청일시
           const rawProgram = row[1] || '미지정';   // B열: 과목명
