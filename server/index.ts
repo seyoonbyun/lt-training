@@ -4,6 +4,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static-serve";
 import { maintenance, getPreviewToken } from "./middleware/maintenance";
 import { startReminderScheduler } from "./services/reminder";
+import { startUnpaidNudgeScheduler } from "./services/unpaid-nudge";
 
 const app = express();
 app.set('trust proxy', true);
@@ -129,6 +130,7 @@ process.on('exit', (code) => {
 
     // 트레이닝 당일 오전 10시(KST) 참여 안내 리마인드
     startReminderScheduler();
+    startUnpaidNudgeScheduler();
   });
 
   setInterval(() => {
