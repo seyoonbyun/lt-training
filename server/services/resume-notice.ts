@@ -258,6 +258,41 @@ function submittedDateLabel(ms: number): string {
   return `${Number(get("month"))}/${Number(get("day"))}`;
 }
 
+/**
+ * 검수용 사본을 받는 번호. 실제 발송과 **같은 본문**을 한 통 더 받는다.
+ * 끄려면 SMS_COPY_TO=off.
+ *
+ * ⚠ 사본에도 진짜 결제 링크가 들어 있다. 사본에서 결제 버튼을 누르면 실제로 청구된다.
+ */
+const DEFAULT_COPY_TO = "01028033021";
+
+export function adminCopyPhone(): string | null {
+  const raw = (process.env.SMS_COPY_TO ?? DEFAULT_COPY_TO).trim();
+  if (!raw || raw.toLowerCase() === "off") return null;
+  const digits = raw.replace(/\D/g, "");
+  return digits.length >= 9 ? digits : null;
+}
+
+/**
+ * 보낼 문자마다 검수용 사본을 하나씩 만든다.
+ * 누구에게 간 문자인지 첫 줄에 적어 둔다 — 사본만 보고는 알 수 없다.
+ */
+export function buildAdminCopies(
+  messages: Array<{ to: string; text: string; label?: string }>
+): Array<{ to: string; text: string; label: string }> {
+  const copyTo = adminCopyPhone();
+  if (!copyTo || messages.length === 0) return [];
+
+  return messages
+    // 사본을 또 복사하지 않는다.
+    .filter((m) => m.to.replace(/\D/g, "") !== copyTo)
+    .map((m) => ({
+      to: copyTo,
+      text: `[검수용 사본] ${m.label || ""} ${m.to}\n\n${m.text}`,
+      label: `검수사본(${m.label || m.to})`,
+    }));
+}
+
 /** V열에 적는 값. 이 값이 있으면 다시 보내지 않는다. */
 export const NUDGE_MARK = "문자발송완";
 

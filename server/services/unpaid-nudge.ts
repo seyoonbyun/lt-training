@@ -28,6 +28,7 @@ import {
   buildResumeLink,
   composeResumeSms,
   stampNudged,
+  buildAdminCopies,
 } from "./resume-notice";
 
 let timer: NodeJS.Timeout | null = null;
@@ -91,8 +92,11 @@ export async function runUnpaidNudge(now = new Date()): Promise<NudgeResult> {
     return result;
   }
 
-  const sms = await sendMessages(messages, "[재결제안내]");
-  result.sent = sms.sent;
+  // 검수용 사본은 실제 발송과 **같은 요청**에 실어 보낸다. 따로 보내면 한쪽만 나갈 수 있다.
+  const copies = buildAdminCopies(messages);
+  const sms = await sendMessages([...messages, ...copies], "[재결제안내]");
+  // 사본은 발송 건수에서 뺀다 — 실제 대상에게 몇 통 갔는지가 중요하다.
+  result.sent = Math.max(0, sms.sent - copies.length);
 
   // 발송을 시도한 묶음만 기록한다. 기록에 실패해도 발송 자체는 끝났으므로 로그로 남긴다
   // (다음 실행에서 다시 보내질 수 있으니 반드시 눈에 띄어야 한다).

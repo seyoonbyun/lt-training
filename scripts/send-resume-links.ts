@@ -21,6 +21,7 @@ import {
   buildResumeLink,
   composeResumeSms,
   stampNudged,
+  buildAdminCopies,
 } from "../server/services/resume-notice";
 import { sendMessages, smsByteLength } from "../server/services/solapi";
 
@@ -70,14 +71,18 @@ async function main() {
     return;
   }
   if (!SEND) {
-    console.log(`\n실제로 보내려면 --send 를 붙이세요. (${messages.length}건)`);
+    const preview = buildAdminCopies(messages);
+    console.log(`\n실제로 보내려면 --send 를 붙이세요. (${messages.length}건`
+      + (preview.length ? ` + 검수용 사본 ${preview.length}건 -> ${preview[0].to}` : "") + ")");
     for (const m of messages) {
       console.log(`\n${"=".repeat(60)}\n수신 ${m.to} · ${smsByteLength(m.text)}bytes\n${"=".repeat(60)}\n${m.text}`);
     }
     return;
   }
 
-  const res = await sendMessages(messages, "[재결제안내·수기]");
+  const copies = buildAdminCopies(messages);
+  if (copies.length) console.log(`검수용 사본 ${copies.length}건을 ${copies[0].to} 로 함께 보냅니다.`);
+  const res = await sendMessages([...messages, ...copies], "[재결제안내·수기]");
   console.log(`\n요청 ${res.requested} / 발송 ${res.sent} / 제외 ${res.skipped} / 실패 ${res.failed}${res.dryRun ? " (DRY RUN)" : ""}`);
   if (res.reason) console.log("사유:", res.reason);
 

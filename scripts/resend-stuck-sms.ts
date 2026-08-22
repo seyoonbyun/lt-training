@@ -81,6 +81,32 @@ async function main() {
     });
   }
 
+  // 검수용 요약 1통. 16건을 그대로 복사하면 발송량이 두 배가 되고,
+  // 사본을 하나씩 읽는 것보다 "누구에게 몇 건 나갔나" 한 장이 더 쓸모 있다.
+  const copyTo = (process.env.SMS_COPY_TO ?? "01028033021").replace(/\D/g, "");
+  if (copyTo && copyTo.length >= 9) {
+    const kinds = new Map<string, number>();
+    for (const m of messages) {
+      const head = String(m.text).split("\n")[0];
+      const kind = head.includes("취소") ? "취소·환불 접수" : "결제완료 안내";
+      kinds.set(kind, (kinds.get(kind) || 0) + 1);
+    }
+    const lines = [...kinds.entries()].map(([k, v]) => `- ${k} ${v}건`).join("\n");
+    const numbers = messages.map((m) => m.to).join(", ");
+    const summary =
+      `[검수용] LTT 미발송 문자 재발송\n\n` +
+      `2026-08-22 발송 한도 초과로 나가지 못했던 문자를 다시 보냈습니다.\n\n` +
+      `총 ${messages.length}건\n${lines}\n\n수신 번호\n${numbers}`;
+    messages.push({
+      to: copyTo,
+      from: sender,
+      text: summary,
+      subject: "[검수용] LTT 미발송 문자 재발송",
+      type: byteLen(summary) > 90 ? "LMS" : "SMS",
+    });
+    console.log(`\n  + 검수용 요약 1건 -> ${copyTo}`);
+  }
+
   if (!SEND) {
     console.log(`\n실제로 보내려면 --send 를 붙이세요. (${messages.length}건)`);
     return;
