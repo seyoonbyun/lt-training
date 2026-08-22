@@ -54,8 +54,21 @@ function isResponseSheet_(sheet) {
 var APPLICATION_TAB = '2026 LTT 신청명단';
 
 /** 정산 담당자 */
-var SETTLEMENT_NAME = '탐';
-var SETTLEMENT_PHONE = '01089401172';
+var SETTLEMENT_CONTACTS = [
+  { name: '탐',   phone: '01089401172' },
+  { name: '조이', phone: '01028033021' }
+];
+
+/** 처리 통보를 담당자 전원에게. 한 명이 실패해도 나머지는 보낸다. */
+function notifySettlement_(text) {
+  for (var i = 0; i < SETTLEMENT_CONTACTS.length; i++) {
+    try {
+      sendSms_(SETTLEMENT_CONTACTS[i].phone, text);
+    } catch (err) {
+      Logger.log('담당자 통보 실패 (' + SETTLEMENT_CONTACTS[i].name + '): ' + err);
+    }
+  }
+}
 
 /** 응답 시트 열 (1-based) */
 var C_TIMESTAMP = 1, C_PAYER = 2, C_PHONE = 3, C_EMAIL = 4, C_TYPE = 5,
@@ -145,7 +158,7 @@ function onRefundEdit(e) {
       processRefund_(row);
     } catch (err) {
       sheet.getRange(row, C_RESULT).setValue('오류: ' + err);
-      sendSms_(SETTLEMENT_PHONE, '[LTT] 환불 처리 중 오류가 났습니다.\n응답 시트 ' + row + '행\n' + err);
+      notifySettlement_('[LTT] 환불 처리 중 오류가 났습니다.\n응답 시트 ' + row + '행\n' + err);
     }
   }
 }
@@ -204,7 +217,7 @@ function processRefund_(row) {
 
   if (!matched.length) {
     resp.getRange(row, C_RESULT).setValue('매칭 실패 — 수동 확인 필요');
-    sendSms_(SETTLEMENT_PHONE,
+    notifySettlement_(
       '[LTT] 환불 처리했으나 신청 행을 찾지 못했습니다.\n' +
       '접수자 ' + payer + ' / ' + subjects.join(', ') + '\n' +
       '대상 ' + attendeeText + '\n신청명단에서 직접 R열에 취소를 적어주세요.');
@@ -215,6 +228,10 @@ function processRefund_(row) {
   var stamp = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm:ss');
   for (var m = 0; m < matched.length; m++) {
     apps.getRange(matched[m].rowNumber, A_CANCEL + 1).setValue(stamp);
+    // 결제완료(J) 열도 같이 바꾼다 — R열만 보면 명단을 눈으로 훑을 때 취소 건이 '완료' 로 보인다.
+    // 집계는 전부 R열로 판정하므로(신청 현황 탭 수식 · 서버) 이 값을 바꿔도 숫자는 달라지지 않는다.
+    // 결제 사실 자체는 주문번호·결제키·승인일시(M~P)에 그대로 남는다.
+    apps.getRange(matched[m].rowNumber, A_PAID + 1).setValue('취소완료');
   }
 
   var summary = matched.map(function (x) { return x.title + ' - ' + x.name; }).join(' / ');
@@ -231,7 +248,7 @@ function processRefund_(row) {
     '문의 : BNI코리아 내셔널 오피스 02-6261-8838');
 
   // 정산 담당자 통보
-  sendSms_(SETTLEMENT_PHONE,
+  notifySettlement_(
     '[LTT] 환불 처리 완료\n' +
     '접수자 ' + payer + ' (' + formatPhone_(phone) + ')\n' +
     (orderNo ? '주문번호 ' + orderNo + '\n' : '') +
@@ -259,7 +276,7 @@ function onRefundSubmit(e) {
       '환불금은 신용카드 승인 취소 후 카드사 정책에 따라 1~2개월, 계좌이체는 승인 후 5~7영업일 내 입금됩니다.\n\n' +
       '문의 : BNI코리아 내셔널 오피스 02-6261-8838');
 
-    sendSms_(SETTLEMENT_PHONE,
+    notifySettlement_(
       '[LTT] 취소·환불 접수\n' +
       '접수자 ' + payer + ' (' + formatPhone_(phone) + ')\n' +
       '과목 : ' + subjects + '\n대상 : ' + attendees + '\n\n' +
