@@ -505,7 +505,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)이 비어 있어 아직 집계되지 않는다.
-      const submitted = await storage.bulkSubmitApplications(validated, reuseRowsForSubmit);
+      const submitted = await storage.bulkSubmitApplications(validated, reuseRowsForSubmit, {
+        name: String(payer.name).trim(),
+        phone: String(payer.phone).trim(),
+        email: String(payer.email || "").trim(),
+      });
 
       // 행 번호와 금액을 같은 순서로 모은다. 과목마다 단가가 달라도 행별로 정확히 기록된다.
       const sheetRows: number[] = [];
@@ -848,6 +852,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             method: result.method,
             approvedAt: result.approvedAt,
             amount: rowAmount,
+            // 「결제 이어하기」는 행이 이미 있어 신청 때 결제자를 못 썼다. 여기서 채운다.
+            payer: order.payer || { name: order.name, phone: order.phone, email: order.email },
           });
         } catch (sheetError) {
           console.error(`⚠ 결제는 승인됐으나 시트 기록에 실패했습니다: ${order.orderId} (행 ${row})`, sheetError);

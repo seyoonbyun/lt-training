@@ -485,6 +485,13 @@ export class GoogleSheetsService {
     email: string;
     participationType: string;
     notes: string;
+    /**
+     * 결제자. 개별 신청은 신청자 본인, 일괄 신청은 대신 결제하는 분이다.
+     * 결제 **전에** 남겨야 한다 - 결제가 끝나지 않으면 누구에게 연락해야 할지
+     * 알 수 없게 된다(2026-08-22 단체 2건에서 실제로 그랬다. 주문이 메모리에만
+     * 있었고 30분 뒤 사라져 결제자를 영영 알 수 없다).
+     */
+    payer?: { name: string; phone: string; email?: string };
   }, reuseRow?: number): Promise<number> {
     // 현재 시간 (한국 시간)
     const now = new Date();
@@ -520,6 +527,10 @@ export class GoogleSheetsService {
         timeZone: 'Asia/Seoul'
       }).format(now);
 
+      // A~I 신청 내용 + (J~R 결제/취소 열은 비운다) + S~U 결제자.
+      // 한 번에 쓰면 호출이 늘지 않는다. 재사용 대상은 미결제·미취소 행뿐이라
+      // J~R 을 빈값으로 덮어도 잃을 값이 없다.
+      const payer = applicationData.payer;
       const values = [[
         submittedAt,
         applicationData.programTitle,
@@ -529,15 +540,19 @@ export class GoogleSheetsService {
         formatPhoneNumber(applicationData.phone),
         applicationData.email,
         applicationData.participationType,
-        applicationData.notes || ''
+        applicationData.notes || '',
+        '', '', '', '', '', '', '', '', '',
+        payer?.name || '',
+        payer?.phone ? formatPhoneNumber(payer.phone) : '',
+        payer?.email || '',
       ]];
 
       // 이탈했다 돌아온 분은 **자기 행을 다시 쓴다**. 새 행을 만들면 결제대기가 사람 수보다
       // 부풀고, 나중에 어느 행이 진짜인지 알 수 없게 된다.
       const isReuse = typeof reuseRow === 'number' && reuseRow > 1;
       const range = isReuse
-        ? encodeURIComponent(`'2026 LTT 신청명단'!A${reuseRow}:I${reuseRow}`)
-        : encodeURIComponent("'2026 LTT 신청명단'!A:I");
+        ? encodeURIComponent(`'2026 LTT 신청명단'!A${reuseRow}:U${reuseRow}`)
+        : encodeURIComponent("'2026 LTT 신청명단'!A:U");
       const url = isReuse
         ? `${this.baseUrl}/${this.spreadsheetId}/values/${range}?valueInputOption=RAW`
         : `${this.baseUrl}/${this.spreadsheetId}/values/${range}:append?valueInputOption=RAW`;
@@ -778,6 +793,8 @@ export class GoogleSheetsService {
     method?: string;
     approvedAt?: string;
     amount?: number;
+    /** 승인 시점에도 한 번 더 남긴다 - 「결제 이어하기」는 행이 이미 있어 신청 때 못 썼을 수 있다. */
+    payer?: { name: string; phone: string; email?: string };
   }): Promise<void> {
     if (!row || row < 2) {
       console.warn('⚠ markApplicationPaid: 행 번호가 없어 시트 기록을 건너뜁니다.', info.orderId);
@@ -801,6 +818,13 @@ export class GoogleSheetsService {
         values: [[info.orderId, info.paymentKey, info.method || '', approvedAtKst]],
       },
     ];
+
+    if (info.payer?.name) {
+      data.push({
+        range: `'2026 LTT 신청명단'!S${row}:U${row}`,
+        values: [[info.payer.name, formatPhoneNumber(info.payer.phone || ''), info.payer.email || '']],
+      });
+    }
 
     const url = `${this.baseUrl}/${this.spreadsheetId}/values:batchUpdate`;
     const response = await fetch(url, {
