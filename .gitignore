@@ -36,3 +36,4 @@ Backup-codes*
 
 # Replit 체크포인트 저장소 (고유 커밋 1,104개, 원격 도달 불가) — 별도 보존
 git/
+logs/

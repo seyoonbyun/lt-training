@@ -17,6 +17,13 @@ REM ============================================================
 setlocal
 chcp 65001 >nul
 
+REM ---- REAL SEND ----------------------------------------------
+REM  .env has SOLAPI_DRY_RUN=1 for local work. send-resume-links.ts
+REM  goes through server/services/solapi.ts, which honors that flag and
+REM  would silently send NOTHING while the log still says "sent".
+REM  Shell env wins over --env-file, so force it off for this run.
+set SOLAPI_DRY_RUN=0
+
 set PROJ=C:\DEV\lt-training
 set NODE=C:\Program Files\nodejs\node.exe
 set TSX=%PROJ%\node_modules\tsx\dist\cli.mjs
