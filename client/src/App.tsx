@@ -10,6 +10,7 @@ import Home from "@/pages/home";
 import Dashboard from "@/pages/dashboard";
 import PaymentSuccess from "@/pages/payment-success";
 import PaymentFail from "@/pages/payment-fail";
+import PaymentResume from "@/pages/payment-resume";
 
 // Mobile loading component
 const MobileLoading = () => (
@@ -54,6 +55,8 @@ function Router() {
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/payment/success" component={PaymentSuccess} />
       <Route path="/payment/fail" component={PaymentFail} />
+      {/* 결제를 끝내지 못한 분에게 보내는 「결제 이어하기」 링크 */}
+      <Route path="/pay/:token" component={PaymentResume} />
       <Route component={NotFound} />
     </Switch>
   );

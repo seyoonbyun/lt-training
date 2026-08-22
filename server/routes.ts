@@ -14,6 +14,7 @@ import {
 } from "./services/toss-payments";
 import type { PendingOrder } from "./services/toss-payments";
 import { sendEnrollmentNotice } from "./services/enrollment-notify";
+import { verifyResumeToken } from "./services/resume-token";
 
 /**
  * 결제 승인 뒤 참여 안내를 문자·이메일로 함께 보낸다.
@@ -589,6 +590,194 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "명단의 양식에 오류가 있어 신청이 보류되었습니다." });
       }
       res.status(500).json({ message: "결제 준비에 실패했습니다. 다시 시도해 주세요." });
+    }
+  });
+
+  /**
+   * ── 「결제 이어하기」 ────────────────────────────────────────────────
+   * 결제를 끝내지 못한 분에게 링크 한 줄을 보내면, 아무것도 다시 입력하지 않고
+   * 결제만 이어서 할 수 있다. 단체 신청은 명단 15명을 다시 타이핑해야 했다.
+   *
+   * 토큰에는 행 번호만 들어 있다. 금액·수신자·과목은 전부 **시트를 다시 읽어** 만든다.
+   * 링크를 고쳐도 청구 금액은 바뀌지 않는다.
+   */
+  async function loadResumeItems(token: string) {
+    const payload = verifyResumeToken(token);
+    if (!payload) return { error: "만료되었거나 올바르지 않은 링크입니다. 내셔널 오피스로 문의해 주세요." as string };
+
+    const rowMap = await googleSheetsService.getApplicationRowsByNumbers(payload.rows);
+    const programs = await googleSheetsService.getSecondarySheetPrograms();
+
+    const items: Array<{ row: number; title: string; name: string; phone: string; email: string; participationType: string; price: number }> = [];
+    const alreadyPaid: string[] = [];
+    const closed: string[] = [];
+
+    for (const rowNo of payload.rows) {
+      const row = rowMap.get(rowNo);
+      if (!row) continue;
+
+      const title = String(row[1] || "").trim();
+      const who = `${String(row[4] || "").trim()}(${title.replace(/^LTT\s*:\s*/, "")})`;
+
+      // 그 사이에 결제됐거나 취소됐으면 조용히 뺀다. 두 번 청구하면 안 된다.
+      if (!googleSheetsService.isRowPayable(row)) { alreadyPaid.push(who); continue; }
+
+      const program = programs.find((p: any) => p.title === title);
+      if (!program || !program.isAvailable || !program.price || program.price <= 0) {
+        closed.push(who);
+        continue;
+      }
+
+      items.push({
+        row: rowNo,
+        title,
+        name: String(row[4] || "").trim(),
+        phone: String(row[5] || "").trim(),
+        email: String(row[6] || "").trim(),
+        participationType: String(row[7] || "").trim(),
+        price: program.price,
+      });
+    }
+
+    return { payload, items, alreadyPaid, closed };
+  }
+
+  // 링크를 열면 보이는 내역. 결제는 아직 만들지 않는다.
+  app.get("/api/payments/resume/:token", async (req, res) => {
+    try {
+      const loaded = await loadResumeItems(String(req.params.token || ""));
+      if ("error" in loaded && loaded.error) return res.status(404).json({ message: loaded.error });
+
+      const { payload, items, alreadyPaid, closed } = loaded as any;
+      res.json({
+        payer: payload.payer,
+        amount: items.reduce((sum: number, i: any) => sum + i.price, 0),
+        quantity: items.length,
+        memberCount: new Set(items.map((i: any) => i.phone.replace(/\D/g, "") || i.name)).size,
+        items: items.map((i: any) => ({
+          row: i.row, name: i.name, title: i.title,
+          participationType: i.participationType, price: i.price,
+        })),
+        alreadyPaid,
+        closed,
+        expiresAt: payload.exp,
+      });
+    } catch (error) {
+      console.error("결제 이어하기 조회 실패:", error);
+      res.status(500).json({ message: "신청 내역을 불러오지 못했습니다." });
+    }
+  });
+
+  // [결제하기] 를 누르면 주문을 만든다. 금액은 여기서 시트 값으로 다시 계산된다.
+  app.post("/api/payments/resume/:token", applicationSubmitRateLimit, async (req, res) => {
+    try {
+      if (!isTossConfigured()) {
+        return res.status(503).json({ message: "결제 설정이 완료되지 않았습니다. 관리자에게 문의해 주세요." });
+      }
+
+      const loaded = await loadResumeItems(String(req.params.token || ""));
+      if ("error" in loaded && loaded.error) return res.status(404).json({ message: loaded.error });
+
+      const { payload, items: allItems, alreadyPaid } = loaded as any;
+
+      // 주문서 수정: 결제할 건을 골라 보낼 수 있다. 링크가 담고 있는 행 안에서만 고를 수 있고,
+      // 안 보내면 전부 결제한다. 제외한 건은 결제되지 않고 신청 대기로 남는다.
+      const requested = Array.isArray(req.body?.rows) ? req.body.rows.map((n: any) => Number(n)) : null;
+      const items = requested
+        ? allItems.filter((i: any) => requested.includes(i.row))
+        : allItems;
+
+      if (requested && items.length !== new Set(requested).size) {
+        return res.status(400).json({ message: "선택하신 항목이 올바르지 않습니다. 화면을 새로고침해 주세요." });
+      }
+
+      if (items.length === 0) {
+        return res.status(409).json({
+          message: alreadyPaid.length > 0
+            ? "이미 결제가 완료된 신청입니다."
+            : "결제할 수 있는 신청이 없습니다. 내셔널 오피스로 문의해 주세요.",
+          alreadyPaid,
+        });
+      }
+
+      const amount = items.reduce((sum: number, i: any) => sum + i.price, 0);
+      const distinctTitles = Array.from(new Set(items.map((i: any) => i.title))) as string[];
+      const orderName = distinctTitles.length === 1
+        ? `${distinctTitles[0]} ${items.length}건`
+        : `${distinctTitles[0]} 외 ${items.length - 1}건`;
+      const orderId = createOrderId("LTT-RESUME");
+
+      saveOrder({
+        orderId,
+        amount,
+        orderName,
+        programTitle: distinctTitles.join(", "),
+        name: payload.payer.name,
+        phone: payload.payer.phone,
+        email: payload.payer.email || "",
+        createdAt: Date.now(),
+        // 승인되면 이 행들의 J열이 찍힌다 — 새 행이 아니라 **원래 신청 행**이다.
+        sheetRows: items.map((i: any) => i.row),
+        rowAmounts: items.map((i: any) => i.price),
+        quantity: items.length,
+        recipients: items.map((i: any) => ({
+          name: i.name,
+          phone: i.phone,
+          email: i.email,
+          programTitle: i.title,
+          trainingType: i.participationType.includes("실시간") ? "live" : "recorded",
+        })),
+        payer: payload.payer,
+        status: "pending",
+      });
+
+      console.log(`↻ 결제 이어하기 주문 생성: ${orderId} / ${items.length}건 / ${amount}원 / 행 ${items.map((i: any) => i.row).join(",")}`);
+
+      res.status(201).json({
+        orderId,
+        amount,
+        quantity: items.length,
+        orderName,
+        clientKey: getClientKey(),
+        customerName: payload.payer.name,
+        customerEmail: payload.payer.email || "",
+        customerMobilePhone: String(payload.payer.phone || "").replace(/[^0-9]/g, ""),
+        skipped: alreadyPaid,
+      });
+    } catch (error) {
+      console.error("결제 이어하기 준비 실패:", error);
+      res.status(500).json({ message: "결제 준비에 실패했습니다. 다시 시도해 주세요." });
+    }
+  });
+
+  // 주문서 수정 - 참여 방식(실시간 <-> 녹화본) 변경. 링크가 담은 행만 바꿀 수 있다.
+  app.patch("/api/payments/resume/:token", applicationSubmitRateLimit, async (req, res) => {
+    try {
+      const payload = verifyResumeToken(String(req.params.token || ""));
+      if (!payload) return res.status(404).json({ message: "만료되었거나 올바르지 않은 링크입니다." });
+
+      const row = Number(req.body?.row);
+      const participationType = String(req.body?.participationType || "").trim();
+
+      if (!payload.rows.includes(row)) {
+        return res.status(403).json({ message: "변경할 수 없는 항목입니다." });
+      }
+      if (participationType !== "실시간 참여" && participationType !== "녹화본 시청(VOD)") {
+        return res.status(400).json({ message: "참여 방식이 올바르지 않습니다." });
+      }
+
+      // 이미 결제됐거나 취소된 행은 못 바꾼다.
+      const rowMap = await googleSheetsService.getApplicationRowsByNumbers([row]);
+      const target = rowMap.get(row);
+      if (!target || !googleSheetsService.isRowPayable(target)) {
+        return res.status(409).json({ message: "이미 결제되었거나 취소된 신청입니다." });
+      }
+
+      await googleSheetsService.updateParticipationType(row, participationType);
+      res.json({ ok: true, row, participationType });
+    } catch (error) {
+      console.error("참여 방식 변경 실패:", error);
+      res.status(500).json({ message: "변경에 실패했습니다. 다시 시도해 주세요." });
     }
   });
 

@@ -681,6 +681,60 @@ export class GoogleSheetsService {
     }
   }
 
+  /**
+   * 「결제 이어하기」용. 지정한 행 번호들을 신청명단에서 읽어 온다.
+   *
+   * 링크로 결제를 이어받을 때 쓴다. 토큰이 가리키는 행이 그 사이에 결제되거나
+   * 취소됐을 수 있으므로, **여기서 읽은 현재 값**으로만 판단한다.
+   * 반환은 요청한 행 순서를 지킨다(금액·수신자 순서가 어긋나면 안 된다).
+   */
+  async getApplicationRowsByNumbers(rowNumbers: number[]): Promise<Map<number, string[]>> {
+    const out = new Map<number, string[]>();
+    if (!this.spreadsheetId || rowNumbers.length === 0) return out;
+
+    const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
+    const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
+    const response = await fetch(`${this.baseUrl}/${this.spreadsheetId}/values/${range}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!response.ok) {
+      throw new Error(`신청명단 읽기 실패: ${response.status}`);
+    }
+
+    const rows = ((await response.json()) as { values?: string[][] }).values || [];
+    for (const n of rowNumbers) {
+      const row = rows[n - 1];   // 시트 1행 = 배열 0번
+      if (row) out.set(n, row);
+    }
+    return out;
+  }
+
+  /**
+   * 참여 방식(H열)을 바꾼다. 「결제 이어하기」 화면에서 실시간 <-> 녹화본을 고를 때 쓴다.
+   * 금액은 같고, 결제 후 안내 문자에 들어갈 링크가 갈리므로 결제 **전에** 정해져야 한다.
+   */
+  async updateParticipationType(row: number, participationType: string): Promise<void> {
+    const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets');
+    const range = encodeURIComponent(`'2026 LTT 신청명단'!H${row}`);
+    const response = await fetch(
+      `${this.baseUrl}/${this.spreadsheetId}/values/${range}?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [[participationType]] }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`참여 방식 변경 실패: ${response.status}`);
+    }
+    console.log(`✎ 참여 방식 변경: ${row}행 -> ${participationType}`);
+  }
+
+  /** 행이 결제 가능한 상태인가 (미결제 + 미취소). 「결제 이어하기」가 매번 다시 본다. */
+  isRowPayable(row: string[]): boolean {
+    return !this.isCancelledRow(row) && !this.isPaidRow(row);
+  }
+
   /** routes/storage 가 같은 키를 쓰도록 공개한다. */
   buildReuseKey(entry: {
     programTitle: string; region: string; chapter: string; name: string; phone: string;
