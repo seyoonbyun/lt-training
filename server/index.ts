@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static-serve";
-import { maintenance } from "./middleware/maintenance";
+import { maintenance, getPreviewToken } from "./middleware/maintenance";
 import { startReminderScheduler } from "./services/reminder";
 
 const app = express();
@@ -117,6 +117,16 @@ process.on('exit', (code) => {
     host: "0.0.0.0",
   }, () => {
     log(`serving on port ${port}`);
+
+    // 점검 모드일 때만, 우회 주소를 로그에 한 번 찍는다.
+    // 사이트를 닫아 둔 채 라이브 결제를 검증하려면 이 주소로 들어와야 한다.
+    const flag = (process.env.MAINTENANCE_MODE || "").trim().toLowerCase();
+    const maintenanceOn = !(flag === "off" || flag === "false" || flag === "0");
+    if (maintenanceOn) {
+      const token = getPreviewToken();
+      log(token ? `점검 모드 — 우회 주소: /?preview=${token}` : "점검 모드 — 우회 토큰 없음 (SESSION_SECRET 미설정)");
+    }
+
     // 트레이닝 당일 오전 10시(KST) 참여 안내 리마인드
     startReminderScheduler();
   });
