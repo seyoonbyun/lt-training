@@ -261,7 +261,11 @@ export class MemStorage implements IStorage {
     ];
   }
 
-  async submitApplication(insertApplication: InsertApplication): Promise<Application> {
+  /**
+   * @param reuseRow 결제를 끝내지 못하고 이탈한 분의 기존 행 번호.
+   *                 주어지면 새 행을 만들지 않고 그 행을 다시 쓴다.
+   */
+  async submitApplication(insertApplication: InsertApplication, reuseRow?: number): Promise<Application> {
     try {
       const id = randomUUID();
       const application: Application = {
@@ -286,7 +290,7 @@ export class MemStorage implements IStorage {
         email: application.email,
         participationType: application.trainingType === 'live' ? '실시간 참여' : '녹화본 시청(VOD)',
         notes: application.notes || ""
-      });
+      }, reuseRow);
 
       // 결제 승인 후 이 행의 결제완료 열을 갱신하기 위해 행 번호를 들고 있는다.
       (application as any).sheetRow = sheetRow;
@@ -302,7 +306,13 @@ export class MemStorage implements IStorage {
     return this.applications.get(id);
   }
 
-  async bulkSubmitApplications(insertApplications: InsertApplication[]): Promise<Application[]> {
+  /**
+   * @param reuseRows insertApplications 와 같은 순서. 값이 있으면 그 행을 다시 쓴다.
+   */
+  async bulkSubmitApplications(
+    insertApplications: InsertApplication[],
+    reuseRows?: Array<number | undefined>
+  ): Promise<Application[]> {
     try {
       const applications: Application[] = [];
       
@@ -337,7 +347,7 @@ export class MemStorage implements IStorage {
             email: app.email,
             participationType: app.participationType || (app.trainingType === "live" ? "실시간 참여" : "녹화본 시청"),
             notes: app.notes || ""
-          });
+          }, reuseRows?.[i]);
           (applications[i] as any).sheetRow = sheetRow;
         } catch (googleError) {
           // 한 건이 실패해도 나머지는 계속 넣는다. 행 번호가 없는 건은 결제 대상에서 빠진다.

@@ -485,7 +485,7 @@ export class GoogleSheetsService {
     email: string;
     participationType: string;
     notes: string;
-  }): Promise<number> {
+  }, reuseRow?: number): Promise<number> {
     // 현재 시간 (한국 시간)
     const now = new Date();
     const koreaTime = new Intl.DateTimeFormat('ko-KR', {
@@ -532,10 +532,17 @@ export class GoogleSheetsService {
         applicationData.notes || ''
       ]];
 
-      const range = encodeURIComponent("'2026 LTT 신청명단'!A:I");
-      const url = `${this.baseUrl}/${this.spreadsheetId}/values/${range}:append?valueInputOption=RAW`;
+      // 이탈했다 돌아온 분은 **자기 행을 다시 쓴다**. 새 행을 만들면 결제대기가 사람 수보다
+      // 부풀고, 나중에 어느 행이 진짜인지 알 수 없게 된다.
+      const isReuse = typeof reuseRow === 'number' && reuseRow > 1;
+      const range = isReuse
+        ? encodeURIComponent(`'2026 LTT 신청명단'!A${reuseRow}:I${reuseRow}`)
+        : encodeURIComponent("'2026 LTT 신청명단'!A:I");
+      const url = isReuse
+        ? `${this.baseUrl}/${this.spreadsheetId}/values/${range}?valueInputOption=RAW`
+        : `${this.baseUrl}/${this.spreadsheetId}/values/${range}:append?valueInputOption=RAW`;
       const response = await fetch(url, {
-        method: 'POST',
+        method: isReuse ? 'PUT' : 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ values }),
       });
@@ -547,7 +554,12 @@ export class GoogleSheetsService {
       }
 
       const result = await response.json();
-      console.log(`✅ Google Sheets 저장 성공: ${applicationData.name} (${applicationData.programTitle})`);
+      console.log(
+        `✅ Google Sheets ${isReuse ? '재사용' : '저장'} 성공: ${applicationData.name} (${applicationData.programTitle})`
+        + (isReuse ? ` -> ${reuseRow}행` : '')
+      );
+
+      if (isReuse) return reuseRow as number;
 
       // 결제 승인 후 이 행의 J열(결제완료)을 갱신해야 하므로 행 번호를 돌려준다.
       // updatedRange 예: '2026 LTT 신청명단'!A15:I15
@@ -577,6 +589,103 @@ export class GoogleSheetsService {
    */
   private isCancelledRow(row: string[]): boolean {
     return String(row[17] || '').trim().length > 0;
+  }
+
+  /**
+   * 결제가 끝난 행인가. J열이 '완료'일 때만 참이다.
+   *
+   * 중복 판정에 쓴다. 신청 행은 **결제 전에** 먼저 쓰이므로(routes.ts prepare),
+   * 결제창을 못 띄웠거나 닫은 분의 행이 미결제 상태로 남는다. 그 행을 중복으로 보면
+   * 본인이 다시 신청할 때마다 409 로 튕겨 결제창 자체가 열리지 않는다
+   * (2026-08-22 장애: 미결제 57건 전원이 재신청 불가 상태로 잠김).
+   * 돈을 낸 적 없는 행은 신청을 막지 않는다.
+   */
+  private isPaidRow(row: string[]): boolean {
+    const status = String(row[9] || '').trim();
+    return status === '완료' || status === '결제완료';
+  }
+
+  /**
+   * 재사용 대상 행을 찾기 위한 키.
+   *
+   * **지역·챕터·이름·연락처·과목명이 전부 같을 때만** 같은 신청으로 본다.
+   * 덮어쓰기(PUT)에 쓰이는 키라 느슨하면 남의 신청을 지운다 — 동명이인이나
+   * 부분일치로 잡히면 안 된다. 과목명만 달라도 다른 신청이다.
+   *
+   * 공백과 전화번호 표기(010-1234-5678 / 01012345678)만 정규화한다.
+   * 이건 느슨하게 보는 게 아니라 같은 값을 같게 보는 것이다.
+   */
+  private reuseKey(entry: {
+    programTitle: string; region: string; chapter: string; name: string; phone: string;
+  }): string {
+    const t = (v: string) => String(v || '').trim().replace(/\s+/g, ' ');
+    const digits = String(entry.phone || '').replace(/\D/g, '');
+    return [t(entry.programTitle), t(entry.region), t(entry.chapter), t(entry.name), digits].join('|');
+  }
+
+  /**
+   * 결제를 끝내지 못하고 이탈한 분의 **기존 행 번호**를 찾는다.
+   *
+   * 신청 행은 결제 전에 먼저 쓰이므로, 이탈했다 돌아온 분에게 새 행을 만들면
+   * 결제대기 건수가 실제 사람 수보다 계속 부풀어 오른다. 자기 행으로 되돌려보낸다.
+   *
+   * 재사용 조건 세 가지가 모두 맞아야 한다:
+   *   1) reuseKey 5개 항목 완전일치
+   *   2) 미결제 (J열이 '완료'가 아님)   - 결제한 행을 덮으면 결제 기록이 날아간다
+   *   3) 미취소 (R열이 비어 있음)       - 취소 행은 기록이라 보존하고 새 행을 만든다
+   *
+   * 시트는 한 번만 읽는다. 같은 키가 여럿이면 가장 위(먼저 만들어진) 행을 쓴다.
+   */
+  async findReusableRows(entries: Array<{
+    programTitle: string; region: string; chapter: string; name: string; phone: string;
+  }>): Promise<Map<string, number>> {
+    const found = new Map<string, number>();
+    if (!this.spreadsheetId || entries.length === 0) return found;
+
+    try {
+      const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
+      const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
+      const response = await fetch(`${this.baseUrl}/${this.spreadsheetId}/values/${range}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        // 못 찾으면 새 행을 만든다. 재사용은 최적화지 필수 경로가 아니다.
+        console.error('재사용 행 조회 API 오류:', response.status);
+        return found;
+      }
+
+      const rows = ((await response.json()) as { values?: string[][] }).values || [];
+      const wanted = new Set(entries.map((e) => this.reuseKey(e)));
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (this.isCancelledRow(row)) continue;
+        if (this.isPaidRow(row)) continue;
+
+        const key = this.reuseKey({
+          programTitle: row[1] || '', region: row[2] || '', chapter: row[3] || '',
+          name: row[4] || '', phone: row[5] || '',
+        });
+        if (!wanted.has(key)) continue;
+        if (found.has(key)) continue;   // 같은 키가 여럿이면 가장 위 행
+        found.set(key, i + 1);          // 시트 행 번호는 1-based, 헤더가 1행
+      }
+
+      if (found.size > 0) {
+        console.log(`↻ 이탈 후 재신청 ${found.size}건 - 기존 행 재사용: ${Array.from(found.values()).join(', ')}행`);
+      }
+      return found;
+    } catch (error) {
+      console.error('재사용 행 조회 실패 (새 행으로 진행):', error);
+      return found;
+    }
+  }
+
+  /** routes/storage 가 같은 키를 쓰도록 공개한다. */
+  buildReuseKey(entry: {
+    programTitle: string; region: string; chapter: string; name: string; phone: string;
+  }): string {
+    return this.reuseKey(entry);
   }
 
   async readApplicationRows(range: string): Promise<string[][]> {
@@ -713,6 +822,7 @@ export class GoogleSheetsService {
         const rowProgram = row[1] || '';
         const rowPhone = (row[5] || '').replace(/\D/g, '');
         if (this.isCancelledRow(row)) continue;   // 취소했으면 다시 신청할 수 있어야 한다
+        if (!this.isPaidRow(row)) continue;      // 미결제는 확정이 아니다 -> 다시 신청할 수 있어야 한다
         if (rowProgram === programTitle && normalizedPhone && rowPhone === normalizedPhone) {
           return true;
         }
@@ -748,6 +858,7 @@ export class GoogleSheetsService {
         const rowProgram = row[1] || '';
         const rowPhone = (row[5] || '').replace(/\D/g, '');
         if (this.isCancelledRow(row)) continue;   // 취소했으면 다시 신청할 수 있어야 한다
+        if (!this.isPaidRow(row)) continue;      // 미결제는 확정이 아니다 -> 다시 신청할 수 있어야 한다
         if (rowProgram && rowPhone) {
           existingEntries.add(`${rowProgram}|${rowPhone}`);
         }

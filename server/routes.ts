@@ -278,13 +278,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // 결제를 끝내지 못하고 이탈한 분은 **자기 행으로 되돌아간다**. 새 행을 만들면
+      // 재시도할 때마다 결제대기가 늘어 실제 사람 수와 어긋난다.
+      // 지역·챕터·이름·연락처·과목명이 전부 같을 때만 같은 신청으로 본다.
+      const reusableRows = await googleSheetsService.findReusableRows(
+        pending.map((item) => ({
+          programTitle: item.data.programTitle,
+          region: item.data.region || "",
+          chapter: item.data.chapter || "",
+          name: item.data.name,
+          phone: item.data.phone,
+        }))
+      );
+      // 한 요청 안에서 같은 행을 두 번 쓰지 않는다 (명단에 같은 줄이 두 번 있는 경우).
+      const usedRows = new Set<number>();
+
       // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)은 비어 있어 아직 집계되지 않는다.
       const sheetRows: number[] = [];
       const rowAmounts: number[] = [];
       const recorded: any[] = [];
 
       for (const item of pending) {
-        const application = await storage.submitApplication(item.data);
+        const key = googleSheetsService.buildReuseKey({
+          programTitle: item.data.programTitle,
+          region: item.data.region || "",
+          chapter: item.data.chapter || "",
+          name: item.data.name,
+          phone: item.data.phone,
+        });
+        const candidate = reusableRows.get(key);
+        const reuseRow = candidate && !usedRows.has(candidate) ? candidate : undefined;
+        if (reuseRow) usedRows.add(reuseRow);
+
+        const application = await storage.submitApplication(item.data, reuseRow);
         const sheetRow = (application as any).sheetRow as number | undefined;
         if (typeof sheetRow === "number" && sheetRow > 1) {
           sheetRows.push(sheetRow);
@@ -452,8 +478,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
+      // 이탈 후 재신청은 기존 행을 다시 쓴다 (개별 신청과 같은 규칙).
+      const reusableRows = await googleSheetsService.findReusableRows(
+        validated.map((app: any) => ({
+          programTitle: app.programTitle,
+          region: app.region || "",
+          chapter: app.chapter || "",
+          name: app.name,
+          phone: app.phone,
+        }))
+      );
+      const usedRows = new Set<number>();
+      const reuseRowsForSubmit: Array<number | undefined> = validated.map((app: any) => {
+        const key = googleSheetsService.buildReuseKey({
+          programTitle: app.programTitle,
+          region: app.region || "",
+          chapter: app.chapter || "",
+          name: app.name,
+          phone: app.phone,
+        });
+        const candidate = reusableRows.get(key);
+        if (!candidate || usedRows.has(candidate)) return undefined;
+        usedRows.add(candidate);
+        return candidate;
+      });
+
       // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)이 비어 있어 아직 집계되지 않는다.
-      const submitted = await storage.bulkSubmitApplications(validated);
+      const submitted = await storage.bulkSubmitApplications(validated, reuseRowsForSubmit);
 
       // 행 번호와 금액을 같은 순서로 모은다. 과목마다 단가가 달라도 행별로 정확히 기록된다.
       const sheetRows: number[] = [];
