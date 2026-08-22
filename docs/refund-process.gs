@@ -20,7 +20,37 @@
  */
 
 var APP_SHEET_ID = '1ksNpdM_3AZLyMvmSXG8GLf_dZMxcxXvx5PHNOrKujH8';
-var RESPONSE_TAB = '설문지 응답 시트1';
+/**
+ * 취소·환불 접수 응답 탭.
+ *
+ * ⛔ **이름으로만 찾으면 탭 이름을 바꾸는 순간 조용히 죽는다.**
+ *    2026-08-22 실제로 `설문지 응답 시트1` → `취소 환불 접수` 로 바뀌면서
+ *    onRefundEdit 이 첫 줄에서 되돌아 나가 처리결과가 통째로 비었다(오류도 안 남았다).
+ *    → 아래 후보 이름을 먼저 보고, 없으면 **1행 헤더로** 찾는다.
+ */
+var RESPONSE_TAB_NAMES = ['취소 환불 접수', '설문지 응답 시트1'];
+var RESPONSE_TAB = RESPONSE_TAB_NAMES[0];   // 로그·안내에 쓸 대표 이름
+
+/** 응답 탭을 찾는다. 이름이 바뀌어도 헤더(`환불처리`·`처리결과`)로 찾아낸다. */
+function getResponseSheet_(ss) {
+  for (var i = 0; i < RESPONSE_TAB_NAMES.length; i++) {
+    var byName = ss.getSheetByName(RESPONSE_TAB_NAMES[i]);
+    if (byName) return byName;
+  }
+  var all = ss.getSheets();
+  for (var j = 0; j < all.length; j++) {
+    var head = all[j].getRange(1, 1, 1, Math.max(all[j].getLastColumn(), C_RESULT)).getValues()[0];
+    var joined = head.join('|');
+    if (joined.indexOf('환불처리') !== -1 && joined.indexOf('처리결과') !== -1) return all[j];
+  }
+  return null;
+}
+
+/** 편집된 시트가 응답 탭인가 — 이름이 아니라 시트 id 로 대조한다. */
+function isResponseSheet_(sheet) {
+  var target = getResponseSheet_(sheet.getParent());
+  return !!target && target.getSheetId() === sheet.getSheetId();
+}
 var APPLICATION_TAB = '2026 LTT 신청명단';
 
 /** 정산 담당자 */
@@ -54,7 +84,7 @@ function zzCheckSetup() {
 
   // 응답 시트·신청명단 열 배치가 코드와 맞는지
   var ss = SpreadsheetApp.openById(APP_SHEET_ID);
-  var resp = ss.getSheetByName(RESPONSE_TAB);
+  var resp = getResponseSheet_(ss);
   var apps = ss.getSheetByName(APPLICATION_TAB);
   Logger.log('응답 시트 ' + C_STATUS + '열 머리글 : ' + resp.getRange(1, C_STATUS).getValue() + ' (기대: 환불처리)');
   Logger.log('응답 시트 ' + C_RESULT + '열 머리글 : ' + resp.getRange(1, C_RESULT).getValue() + ' (기대: 처리결과)');
@@ -98,24 +128,48 @@ function setupTriggers() {
 function onRefundEdit(e) {
   if (!e || !e.range) return;
   var sheet = e.range.getSheet();
-  if (sheet.getName() !== RESPONSE_TAB) return;
-  if (e.range.getColumn() !== C_STATUS) return;
-  if (String(e.value || '').trim() !== '완료') return;
+  if (!isResponseSheet_(sheet)) return;
 
-  var row = e.range.getRow();
-  if (row < 2) return;
+  // 편집 범위가 `환불처리`(L) 열을 걸치는지. 여러 칸을 한 번에 바꾸는 경우가 있어 범위로 본다.
+  if (C_STATUS < e.range.getColumn() || C_STATUS > e.range.getLastColumn()) return;
 
-  try {
-    processRefund_(row);
-  } catch (err) {
-    sheet.getRange(row, C_RESULT).setValue('오류: ' + err);
-    sendSms_(SETTLEMENT_PHONE, '[LTT] 환불 처리 중 오류가 났습니다.\n응답 시트 ' + row + '행\n' + err);
+  // ⛔ e.value 는 **한 칸을 직접 고쳤을 때만** 들어온다.
+  //    붙여넣기 · 아래로 끌어 채우기 · 여러 칸 편집에는 값이 안 실린다.
+  //    예전엔 여기서 조용히 빠져나가 처리결과가 통째로 비었다 → 셀에서 직접 읽는다.
+  for (var row = Math.max(e.range.getRow(), 2); row <= e.range.getLastRow(); row++) {
+    if (String(sheet.getRange(row, C_STATUS).getValue() || '').trim() !== '완료') continue;
+    // 이미 처리한 행은 건너뛴다 — 같은 행을 두 번 취소하지 않는다.
+    if (String(sheet.getRange(row, C_RESULT).getValue() || '').trim()) continue;
+
+    try {
+      processRefund_(row);
+    } catch (err) {
+      sheet.getRange(row, C_RESULT).setValue('오류: ' + err);
+      sendSms_(SETTLEMENT_PHONE, '[LTT] 환불 처리 중 오류가 났습니다.\n응답 시트 ' + row + '행\n' + err);
+    }
   }
+}
+
+/**
+ * 트리거가 못 돈 행을 손으로 돌린다.
+ * 편집기에서 ROW 를 처리할 응답 시트 행 번호로 바꾸고 실행하면 된다.
+ * (처리결과가 이미 차 있으면 아무것도 하지 않는다)
+ */
+function runRefundForRow() {
+  var ROW = 3;
+
+  var sheet = getResponseSheet_(SpreadsheetApp.openById(APP_SHEET_ID));
+  if (String(sheet.getRange(ROW, C_RESULT).getValue() || '').trim()) {
+    Logger.log(ROW + '행은 이미 처리됐습니다: ' + sheet.getRange(ROW, C_RESULT).getValue());
+    return;
+  }
+  processRefund_(ROW);
+  Logger.log(ROW + '행 처리결과: ' + sheet.getRange(ROW, C_RESULT).getValue());
 }
 
 function processRefund_(row) {
   var ss = SpreadsheetApp.openById(APP_SHEET_ID);
-  var resp = ss.getSheetByName(RESPONSE_TAB);
+  var resp = getResponseSheet_(ss);
   var apps = ss.getSheetByName(APPLICATION_TAB);
 
   var r = resp.getRange(row, 1, 1, C_RESULT).getValues()[0];
@@ -188,7 +242,7 @@ function processRefund_(row) {
 function onRefundSubmit(e) {
   try {
     var ss = SpreadsheetApp.openById(APP_SHEET_ID);
-    var resp = ss.getSheetByName(RESPONSE_TAB);
+    var resp = getResponseSheet_(ss);
     var row = e && e.range ? e.range.getRow() : resp.getLastRow();
     var r = resp.getRange(row, 1, 1, C_AGREE).getValues()[0];
 
