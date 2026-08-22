@@ -264,8 +264,12 @@ export class GoogleSheetsService {
       const hours = timeMatch ? parseInt(timeMatch[1]) : 14;
       const minutes = timeMatch ? parseInt(timeMatch[2]) : 0;
       
-      const date = new Date(year, month - 1, day, hours, minutes);
-      return date.toISOString();
+      // 시트의 시각은 KST 다. new Date(y,m,d,...) 는 **서버 로컬 타임존**으로 해석하는데
+      // 운영(Railway)은 UTC 라 18:00 이 UTC 18:00 이 되고, 서울 기준으로 환산하면
+      // 다음 날 03:00 이 된다 -> 캘린더 칸과 당일 리마인드가 하루씩 밀렸다.
+      // 서버 타임존과 무관하게 같은 순간이 되도록 +09:00 을 명시한다.
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${year}-${pad(month)}-${pad(day)}T${pad(hours)}:${pad(minutes)}:00+09:00`;
     }
     
     return new Date().toISOString();
