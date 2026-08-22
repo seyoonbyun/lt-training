@@ -18,6 +18,7 @@ import {
   CONTACT_NAME,
   CONTACT_TEL,
   buildBlock,
+  collectOrderIds,
   countPeople,
   groupByEmail,
   groupByProgram,
@@ -155,6 +156,8 @@ function wrapHtml(opts: {
   intro: string;
   cards: string;
   footNote?: string;
+  /** 카드 아래 보조 버튼 위에 놓는 주문번호 줄 */
+  orderNote?: string;
 }): string {
   return `<!doctype html>
 <html lang="ko">
@@ -175,6 +178,7 @@ function wrapHtml(opts: {
 <tr><td style="padding:0 32px 24px 32px;font-size:14px;line-height:1.7;color:#333;">${opts.intro}</td></tr>
 
 ${opts.cards}
+${opts.orderNote ? `<tr><td style="padding:0 32px 6px 32px;font-size:13px;line-height:1.7;color:#666;">주문번호 : <span style="color:#333;font-weight:700;">${escapeHtml(opts.orderNote)}</span></td></tr>` : ""}
 ${actionsHtml()}
 ${opts.footNote ? `<tr><td style="padding:0 32px 16px 32px;font-size:13px;line-height:1.7;color:#888;">${opts.footNote}</td></tr>` : ""}
 ${DIVIDER}
@@ -202,8 +206,9 @@ function subjectFor(kind: NoticeKind, titles: string[]): string {
 }
 
 /** 규정·문의를 텍스트본 끝에 붙인다 */
-function textFooter(): string[] {
+function textFooter(orderIds: string[] = []): string[] {
   return [
+    ...(orderIds.length ? [`주문번호 : ${orderIds.join(", ")}`] : []),
     `강의 이수 신청 : ${TRAINING_SUMMARY_URL}`,
     `취소 · 환불 접수 : ${REFUND_FORM_URL || CS_KAKAO_URL}`,
     "",
@@ -231,6 +236,8 @@ export function buildAttendeeMails(
     const titles = list.map((r) => r.programTitle);
     const blocks = list.map((r) => buildBlock(r.programTitle, r.trainingType, programs.get(r.programTitle)));
     const subject = subjectFor(kind, titles);
+    // 취소·환불 접수 폼이 "결제 완료 문자·이메일에 적힌 번호" 라고 안내한다. 반드시 실린다.
+    const orders = collectOrderIds(list);
 
     const headlineText =
       kind === "reminder" ? `${name}님, 오늘 교육이 진행됩니다.` : `${name}님, 신청이 정상적으로 완료되었습니다.`;
@@ -253,6 +260,7 @@ export function buildAttendeeMails(
           `<strong style="color:#111;">${escapeHtml(`[${titleSummary(titles)}]`)}</strong>`
         ),
         cards: blocks.map((b) => cardHtml(b)).join(""),
+        orderNote: orders.join(", "),
       }),
       text: [
         `[${BRAND}]`,
@@ -260,7 +268,7 @@ export function buildAttendeeMails(
         "",
         blocks.map((b) => blockText(b)).join("\n\n"),
         "",
-        ...textFooter(),
+        ...textFooter(orders),
       ].join("\n"),
       label: `${name}(${list.length}과목)`,
     };
@@ -283,6 +291,7 @@ export function buildPayerMail(
   if (!email || recipients.length === 0) return null;
 
   const grouped = groupByProgram(recipients);
+  const orders = collectOrderIds(recipients);
   const titles = grouped.map((g) => g.title);
   const subject = subjectFor(kind, titles);
   const people = countPeople(recipients);
@@ -323,8 +332,9 @@ export function buildPayerMail(
       intro: escapeHtml(introText),
       cards,
       footNote: foot,
+      orderNote: orders.join(", "),
     }),
-    text: [`[${BRAND}]`, headlineText, "", cardsText, "", ...footText, "", ...textFooter()].join("\n"),
+    text: [`[${BRAND}]`, headlineText, "", cardsText, "", ...footText, "", ...textFooter(orders)].join("\n"),
     label: `결제자 ${payer.name}`,
   };
 }

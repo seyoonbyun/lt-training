@@ -6,6 +6,9 @@
  *
  * 대상 = 결제완료(J열='완료') + 그 과목의 날짜가 오늘(KST)인 행.
  *
+ * ⛔ 읽는 범위는 **A:R** 이어야 한다. Q 까지만 읽으면 R열(취소)이 항상 빈 값이 되어
+ *    취소한 사람에게 "오늘 교육이 진행됩니다" 가 그대로 나간다.
+ *
  * ⛔ 중복 발송을 막는 것이 핵심이다. 컨테이너가 재시작해도 다시 보내면 안 되므로
  *    보낸 뒤 신청명단 **Q열**에 발송 시각을 적고, 값이 있는 행은 건너뛴다.
  *    (메모리 플래그만 두면 Railway 재배포 한 번에 전원 재발송된다)
@@ -66,7 +69,7 @@ export async function findTodaysAttendees(now = new Date()): Promise<{
     return { today, rows: [], titlesToday: [] };
   }
 
-  const values = await googleSheetsService.readApplicationRows(`'${SHEET_NAME}'!A1:Q1000`);
+  const values = await googleSheetsService.readApplicationRows(`'${SHEET_NAME}'!A1:R1000`);
   const rows: PendingRow[] = [];
 
   // 1행은 헤더. 시트 행 번호는 1-based 이므로 index+1.
@@ -78,6 +81,7 @@ export async function findTodaysAttendees(now = new Date()): Promise<{
     const email = String(r[6] || "").trim();      // G: 이메일
     const participation = String(r[7] || "").trim(); // H: 참여 방식
     const paid = String(r[9] || "").trim();       // J: 결제완료
+    const orderId = String(r[12] || "").trim();   // M: 주문번호
     const remindedAt = String(r[16] || "").trim(); // Q: 리마인드 발송
     const cancelledAt = String(r[17] || "").trim(); // R: 취소
 
@@ -94,6 +98,7 @@ export async function findTodaysAttendees(now = new Date()): Promise<{
         phone,
         email,
         programTitle: title,
+        orderId,
         // 시트 H열은 '실시간 참여' / '녹화본 시청(VOD)' 로 적힌다.
         trainingType: participation.includes("실시간") ? "live" : "recorded",
       },

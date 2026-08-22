@@ -22,6 +22,21 @@ export interface SmsRecipient {
   trainingType: string;
   /** 이메일 발송 대상. 없으면 문자만 나간다 */
   email?: string;
+  /**
+   * 주문번호. 취소·환불 접수 폼이 "결제 완료 문자·이메일에 적힌 번호"라고 안내하므로
+   * 문자·이메일 양쪽에 반드시 실려야 한다. 담당자가 이 번호로 신청 행을 찾는다.
+   */
+  orderId?: string;
+}
+
+/** 한 통에 묶인 신청들의 주문번호. 중복은 없애고 순서는 유지한다. */
+export function collectOrderIds(list: SmsRecipient[]): string[] {
+  const seen: string[] = [];
+  for (const r of list) {
+    const id = String(r.orderId || "").trim();
+    if (id && !seen.includes(id)) seen.push(id);
+  }
+  return seen;
 }
 
 /** 세션등록 시트에서 읽어 온 과목 정보 중 안내에 필요한 부분만 */

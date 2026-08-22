@@ -24,7 +24,8 @@ import { sendEnrollmentNotice } from "./services/enrollment-notify";
  */
 async function sendEnrollmentSms(order: PendingOrder) {
   return sendEnrollmentNotice({
-    recipients: order.recipients || [],
+    // 주문번호를 수강자마다 붙여 보낸다 — 문자·이메일에 실려야 취소·환불 접수 폼을 채울 수 있다.
+    recipients: (order.recipients || []).map((r) => ({ ...r, orderId: order.orderId })),
     payer: order.payer,
     kind: "confirm",
     context: `(주문 ${order.orderId})`,

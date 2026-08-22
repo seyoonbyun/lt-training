@@ -14,6 +14,7 @@ import {
   CONTACT_NAME,
   CONTACT_TEL,
   buildBlock,
+  collectOrderIds,
   countPeople,
   groupByPhone,
   groupByProgram,
@@ -94,7 +95,13 @@ export function buildAttendeeMessages(
       HEAD,
       kind === "reminder" ? `${name}님, 오늘 교육이 진행됩니다.` : `${name}님, 신청이 완료되었습니다.`,
     ].join("\n");
-    const foot = [...ACTION_LINES, `※ ${REFUND_SUMMARY_SHORT}`, CONTACT].join("\n");
+    const orders = collectOrderIds(list);
+    const foot = [
+      ...(orders.length ? [`주문번호 : ${orders.join(", ")}`] : []),
+      ...ACTION_LINES,
+      `※ ${REFUND_SUMMARY_SHORT}`,
+      CONTACT,
+    ].join("\n");
     return splitBlocks(head, blocks, foot).map((text) => ({
       to: phone,
       text,
@@ -131,6 +138,9 @@ export function buildPayerMessage(
     blocks.join("\n\n"),
     "",
     "※ 연락처를 남긴 수강자에게는 위 안내가 개별 발송되었습니다.",
+    ...(collectOrderIds(recipients).length
+      ? [`주문번호 : ${collectOrderIds(recipients).join(", ")}`]
+      : []),
     ...ACTION_LINES,
     `※ ${REFUND_SUMMARY_SHORT}`,
     CONTACT,
