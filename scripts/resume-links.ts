@@ -19,7 +19,7 @@
  *
  * 실행: npx tsx scripts/resume-links.ts [https://ltt-bnikorea.com]
  */
-import { createResumeToken } from "../server/services/resume-token";
+import { createResumeToken, encodeRows } from "../server/services/resume-token";
 import { getServiceAccountAccessToken } from "../server/services/google-sheets";
 
 const BASE = process.argv[2] || "https://ltt-bnikorea.com";
@@ -114,13 +114,13 @@ async function main() {
   console.log(`미결제 묶음 ${groups.length}건\n`);
 
   for (const g of groups) {
-    const link = `${BASE}/pay/${createResumeToken({ rows: g.rows, payer: g.payer })}`;
+    const link = `${BASE}/pay/${createResumeToken(g.rows)}`;
     console.log(`■ ${g.payer.name} (${g.region}/${g.chapter})`);
     console.log(`  접수    : ${g.submittedAt}`);
     console.log(`  연락처  : ${g.payer.phone}`);
     console.log(`  규모    : ${g.people.size}명 / ${g.rows.length}건 / 약 ${(g.rows.length * PRICE_HINT).toLocaleString()}원`);
-    console.log(`  행      : ${g.rows.join(",")}`);
-    console.log(`  링크    : ${link}`);
+    console.log(`  행      : ${encodeRows(g.rows)}`);
+    console.log(`  링크    : ${link}   (${link.length}자)`);
     console.log();
   }
 }

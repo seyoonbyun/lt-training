@@ -612,6 +612,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const alreadyPaid: string[] = [];
     const closed: string[] = [];
 
+    // 결제자는 토큰에 담지 않는다(링크를 짧게 유지해야 문자로 보낼 수 있다).
+    // 묶음의 첫 행에서 읽는다 - 단체 신청은 신청자 본인이 먼저 들어간다.
+    const head = rowMap.get(payload.rows[0]);
+    const payer = {
+      name: String(head?.[4] || "").trim(),
+      phone: String(head?.[5] || "").trim(),
+      email: String(head?.[6] || "").trim() || undefined,
+    };
+
     for (const rowNo of payload.rows) {
       const row = rowMap.get(rowNo);
       if (!row) continue;
@@ -639,7 +648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
 
-    return { payload, items, alreadyPaid, closed };
+    return { payload, payer, items, alreadyPaid, closed };
   }
 
   // 링크를 열면 보이는 내역. 결제는 아직 만들지 않는다.
@@ -648,9 +657,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loaded = await loadResumeItems(String(req.params.token || ""));
       if ("error" in loaded && loaded.error) return res.status(404).json({ message: loaded.error });
 
-      const { payload, items, alreadyPaid, closed } = loaded as any;
+      const { payload, payer, items, alreadyPaid, closed } = loaded as any;
       res.json({
-        payer: payload.payer,
+        payer,
         amount: items.reduce((sum: number, i: any) => sum + i.price, 0),
         quantity: items.length,
         memberCount: new Set(items.map((i: any) => i.phone.replace(/\D/g, "") || i.name)).size,
@@ -678,7 +687,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loaded = await loadResumeItems(String(req.params.token || ""));
       if ("error" in loaded && loaded.error) return res.status(404).json({ message: loaded.error });
 
-      const { payload, items: allItems, alreadyPaid } = loaded as any;
+      const { payload, payer, items: allItems, alreadyPaid } = loaded as any;
 
       // 주문서 수정: 결제할 건을 골라 보낼 수 있다. 링크가 담고 있는 행 안에서만 고를 수 있고,
       // 안 보내면 전부 결제한다. 제외한 건은 결제되지 않고 신청 대기로 남는다.
@@ -712,9 +721,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         amount,
         orderName,
         programTitle: distinctTitles.join(", "),
-        name: payload.payer.name,
-        phone: payload.payer.phone,
-        email: payload.payer.email || "",
+        name: payer.name,
+        phone: payer.phone,
+        email: payer.email || "",
         createdAt: Date.now(),
         // 승인되면 이 행들의 J열이 찍힌다 — 새 행이 아니라 **원래 신청 행**이다.
         sheetRows: items.map((i: any) => i.row),
@@ -727,7 +736,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           programTitle: i.title,
           trainingType: i.participationType.includes("실시간") ? "live" : "recorded",
         })),
-        payer: payload.payer,
+        payer,
         status: "pending",
       });
 
@@ -739,9 +748,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         quantity: items.length,
         orderName,
         clientKey: getClientKey(),
-        customerName: payload.payer.name,
-        customerEmail: payload.payer.email || "",
-        customerMobilePhone: String(payload.payer.phone || "").replace(/[^0-9]/g, ""),
+        customerName: payer.name,
+        customerEmail: payer.email || "",
+        customerMobilePhone: String(payer.phone || "").replace(/[^0-9]/g, ""),
         skipped: alreadyPaid,
       });
     } catch (error) {
