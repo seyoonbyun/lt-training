@@ -292,7 +292,7 @@ export default function PaymentResume() {
         )}
 
         <p className="text-xs text-gray-500 text-center mt-4">
-          인원을 추가하시려면{" "}
+          인원을 추가하시거나, 다른 과목으로 변경하시려면{" "}
           <a href="/" className="text-red-600 hover:underline">
             신규 신청
           </a>
