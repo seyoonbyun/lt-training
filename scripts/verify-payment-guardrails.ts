@@ -1,7 +1,7 @@
 /**
  * ①②③ 검증 — 읽기 전용. 시트에 아무것도 쓰지 않고, 문자도 보내지 않는다.
  *
- *   1) '결제만료' 표시가 결제를 막지 않는지 (가장 중요한 확인)
+ *   1) '결제거부' 표시가 결제를 막지 않는지 (가장 중요한 확인)
  *   2) 지금 시트의 결제대기 실측치와 급증 알림 판정
  *   3) 3일 기준으로 오늘 만료 대상이 될 묶음
  */
@@ -20,14 +20,14 @@ function row(paymentStatus: string, cancelled = ""): string[] {
 
 async function main() {
   console.log("─".repeat(70));
-  console.log("[1] '결제만료' 가 결제를 막지 않는가 (잠금이 아니라 집계 표시여야 한다)");
+  console.log("[1] '결제거부' 가 결제를 막지 않는가 (잠금이 아니라 집계 표시여야 한다)");
   const cases: Array<[string, string[], boolean, boolean]> = [
     //  이름                       행                    결제가능?  만료표시?
     ["미결제(빈 값)",              row(""),               true,  false],
-    ["결제만료",                   row(EXPIRED_MARK),     true,  true ],
+    ["결제거부",                   row(EXPIRED_MARK),     true,  true ],
     ["결제완료",                   row("완료"),           false, false],
     ["취소",                       row("", "2026-08-22"), false, false],
-    ["결제만료 + 취소",            row(EXPIRED_MARK, "2026-08-22"), false, true],
+    ["결제거부 + 취소",            row(EXPIRED_MARK, "2026-08-22"), false, true],
   ];
   let bad = 0;
   for (const [label, r, wantPayable, wantExpired] of cases) {

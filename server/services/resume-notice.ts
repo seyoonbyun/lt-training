@@ -27,8 +27,12 @@ export interface UnpaidGroup {
   submittedAtMs: number;
   payerName: string;
   payerPhone: string;
-  /** 이미 재결제 안내를 보낸 묶음인가 (V열) */
+  /** 이미 1차(재결제) 안내를 보낸 묶음인가 */
   alreadyNotified: boolean;
+  /** 1차 안내 발송 시각(ms). 없거나 못 읽으면 NaN. */
+  nudgedAtMs: number;
+  /** 2차(미결제) 안내 발송 시각(ms). 없거나 못 읽으면 NaN. */
+  finalNoticeAtMs: number;
   /** 행별 원본 (요약 계산에 쓴다) */
   raw: string[][];
 }
@@ -48,9 +52,10 @@ export interface GroupSummary {
   closed: string[];
 }
 
-/** 재결제 안내 발송 시각을 적는 열. 값이 있으면 다시 보내지 않는다. */
+/** 1차(재결제) 안내 발송 시각을 적는 열. 값이 있으면 다시 보내지 않는다. */
 export const NUDGE_COL = "재결제 안내" as const;
-const NUDGE_INDEX = 21; // A=0
+/** 2차(미결제) 안내 발송 시각을 적는 열. */
+export const FINAL_COL = "미결제 안내 문자 발송" as const;
 const SHEET_NAME = "2026 LTT 신청명단";
 
 /** "2026. 08. 22. PM 05:58:17" -> epoch ms. 못 읽으면 NaN. */
@@ -117,6 +122,8 @@ export async function findUnpaidGroups(): Promise<UnpaidGroup[]> {
         payerName: String(row[4] || "").trim(),
         payerPhone: String(row[5] || "").replace(/\D/g, ""),
         alreadyNotified: false,
+        nudgedAtMs: NaN,
+        finalNoticeAtMs: NaN,
         raw: [],
       };
       groups.push(current);
@@ -124,8 +131,14 @@ export async function findUnpaidGroups(): Promise<UnpaidGroup[]> {
 
     current!.rows.push(i + 1);
     current!.raw.push(row);
+    // 묶음 안에서 가장 이른 발송 시각을 쓴다 - 묶음은 한 번에 보내므로 모두 같아야 하지만,
+    // 하나라도 못 찍힌 경우가 있어 있는 값 중 가장 이른 것으로 판단한다.
+    const nAt = parseStamp(getCol(row, NUDGE_COL));
+    if (Number.isFinite(nAt)) current!.nudgedAtMs = Number.isFinite(current!.nudgedAtMs) ? Math.min(current!.nudgedAtMs, nAt) : nAt;
+    const fAt = parseStamp(getCol(row, FINAL_COL));
+    if (Number.isFinite(fAt)) current!.finalNoticeAtMs = Number.isFinite(current!.finalNoticeAtMs) ? Math.min(current!.finalNoticeAtMs, fAt) : fAt;
     // 묶음 안에 한 행이라도 안내 기록이 있으면 그 묶음은 이미 보낸 것으로 본다.
-    if (String(row[NUDGE_INDEX] || "").trim()) current!.alreadyNotified = true;
+    if (getCol(row, NUDGE_COL)) current!.alreadyNotified = true;
     lastAt = at;
   }
 
@@ -296,7 +309,31 @@ export function buildAdminCopies(
     }));
 }
 
-/** V열에 적는 값. 이 값이 있으면 다시 보내지 않는다. */
+/**
+ * 발송 표시로 적는 값 = **발송 시각**.
+ *
+ * ⛔ 예전에는 "문자발송완" 이라는 글자만 적었다. 값이 있으면 다시 안 보낸다는 목적에는
+ *   맞았지만, **언제 보냈는지를 모르니 "n시간 뒤"를 계산할 수 없었다.**
+ *   2차 안내(12시간 뒤)·결제거부 표기(다시 12시간 뒤)가 이 시각을 읽는다.
+ */
+export function sendStamp(now = new Date()): string {
+  const p = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Seoul",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).format(now);
+  return p.replace("T", " ");
+}
+
+/** sendStamp 가 적은 "YYYY-MM-DD HH:mm:ss"(KST) 를 epoch ms 로. 못 읽으면 NaN. */
+export function parseStamp(v: string): number {
+  const m = String(v || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return NaN;
+  const [, y, mo, d, h, mi, sec] = m;
+  return Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${sec}+09:00`);
+}
+
+/** (구) 값. 시각 없이 이 글자만 있는 행이 남아 있다 - 그 묶음은 시각을 알 수 없다. */
 export const NUDGE_MARK = "문자발송완";
 
 /**
@@ -304,17 +341,23 @@ export const NUDGE_MARK = "문자발송완";
  * 묶음 단위로 보내므로 그 묶음의 **모든 행**에 찍어야 한다 — 한 행만 찍으면
  * 다음 실행에서 나머지 행이 새 묶음으로 잡혀 같은 사람에게 또 나간다.
  */
-export async function stampNudged(rows: number[], _now = new Date()): Promise<void> {
+export async function stampNudged(rows: number[], now = new Date()): Promise<void> {
+  const stamp = sendStamp(now);
   await googleSheetsService.writeApplicationCells(
-    rows.map((row) => ({
-      range: cell(SHEET_NAME, row, NUDGE_COL),
-      values: [[NUDGE_MARK]],
-    }))
+    rows.map((row) => ({ range: cell(SHEET_NAME, row, NUDGE_COL), values: [[stamp]] }))
+  );
+}
+
+/** 2차(미결제) 안내 발송 시각을 묶음의 모든 행에 남긴다. */
+export async function stampFinalNotice(rows: number[], now = new Date()): Promise<void> {
+  const stamp = sendStamp(now);
+  await googleSheetsService.writeApplicationCells(
+    rows.map((row) => ({ range: cell(SHEET_NAME, row, FINAL_COL), values: [[stamp]] }))
   );
 }
 
 /**
- * 묶음의 모든 행을 J열 '결제만료'로 표시한다.
+ * 묶음의 모든 행을 신청현황 열에 '결제거부'로 표시한다.
  *
  * ⛔ 이 표시는 **집계에서 빼기 위한 것**이지 잠금이 아니다. 이 행은 여전히
  *   결제 가능(isRowPayable) 상태이고, 2차 안내 문자의 링크로 결제하시면 '완료'로 바뀐다.
@@ -324,7 +367,7 @@ export async function stampNudged(rows: number[], _now = new Date()): Promise<vo
 export async function markExpired(rows: number[]): Promise<void> {
   await googleSheetsService.writeApplicationCells(
     rows.map((row) => ({
-      range: `'${SHEET_NAME}'!J${row}`,
+      range: cell(SHEET_NAME, row, '신청현황'),
       values: [[EXPIRED_MARK]],
     }))
   );

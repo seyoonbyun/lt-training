@@ -20,10 +20,13 @@ const GOOGLE_SHEETS_API_KEY = process.env.GOOGLE_SHEETS_API_KEY || "";
 const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID || "";
 
 /**
- * 결제 없이 방치된 신청을 정리했을 때 J열에 적는 값.
- * 집계에서만 빠지고, 결제는 그대로 이어서 하실 수 있다.
+ * 안내를 두 번 보내고도 결제가 안 된 신청을 정리했을 때 **신청현황** 열에 적는 값.
+ *
+ * ⛔ 집계에서만 빠진다. **잠금이 아니다** — isPaidRow 도 isCancelledRow 도 아니어서
+ *   중복 판정·행 재사용·「결제 이어하기」가 전과 똑같이 동작하고, 이미 받은 링크로
+ *   결제하시면 그 행이 그대로 '완료' 가 된다. 돈 내려는 분을 막는 규칙은 만들지 않는다.
  */
-export const EXPIRED_MARK = '결제만료';
+export const EXPIRED_MARK = '결제거부';
 
 // 모듈 레벨 액세스 토큰 캐시 (스코프별로 구분)
 const _cachedTokens: Map<string, { token: string; expiresAt: number }> = new Map();
@@ -709,7 +712,7 @@ export class GoogleSheetsService {
   }
 
   /**
-   * 결제 없이 오래 방치돼 정리한 행인가. J열이 '결제만료'다.
+   * 결제 없이 오래 방치돼 정리한 행인가. J열이 '결제거부'다.
    *
    * ⛔ 만료는 **집계에서만** 빼는 표시다. 결제를 막는 잠금이 아니다.
    *   isPaidRow / isCancelledRow 어느 쪽에도 걸리지 않으므로 중복 판정·행 재사용·
