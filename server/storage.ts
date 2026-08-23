@@ -270,22 +270,21 @@ export class MemStorage implements IStorage {
     reuseRow?: number,
     payer?: { name: string; phone: string; email?: string }
   ): Promise<Application> {
+    const id = randomUUID();
+    const application: Application = {
+      ...insertApplication,
+      id,
+      programId: (insertApplication as any).programId || `single-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      status: "pending",
+      createdAt: new Date(),
+      chapter: insertApplication.chapter || null,
+      notes: insertApplication.notes || null
+    };
+    this.applications.set(id, application);
+
     try {
-      const id = randomUUID();
-      const application: Application = {
-        ...insertApplication,
-        id,
-        programId: (insertApplication as any).programId || `single-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        status: "pending",
-        createdAt: new Date(),
-        chapter: insertApplication.chapter || null,
-        notes: insertApplication.notes || null
-      };
-
-      // Store locally
-      this.applications.set(id, application);
-
-      const sheetRow = await googleSheetsService.addApplicationToSheet({
+      // 결제 승인 후 이 행의 결제완료 열을 갱신하기 위해 행 번호를 들고 있는다.
+      (application as any).sheetRow = await googleSheetsService.addApplicationToSheet({
         programTitle: insertApplication.programTitle,
         region: insertApplication.region || "",
         chapter: application.chapter || "",
@@ -297,15 +296,15 @@ export class MemStorage implements IStorage {
         // 개별 신청은 신청자 본인이 결제한다.
         payer: payer || { name: application.name, phone: application.phone, email: application.email },
       }, reuseRow);
-
-      // 결제 승인 후 이 행의 결제완료 열을 갱신하기 위해 행 번호를 들고 있는다.
-      (application as any).sheetRow = sheetRow;
-
-      return application;
     } catch (error) {
-      console.error("Failed to submit application:", error);
-      throw new Error("신청 제출에 실패했습니다. 다시 시도해주세요.");
+      // ⛔ 던지지 않는다. 시트 기록이 실패했다고 결제를 막으면 돈 내려는 분이 막힌다.
+      //   행 번호 0 이면 호출부가 "행 없음"으로 알고 결제는 그대로 진행한다.
+      //   기록 실패 자체는 googleSheetsService 가 관리자에게 문자로 알린다.
+      console.error("신청 행 기록 실패 (결제는 계속 진행):", error);
+      (application as any).sheetRow = 0;
     }
+
+    return application;
   }
 
   async getApplication(id: string): Promise<Application | undefined> {

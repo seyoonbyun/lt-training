@@ -1,7 +1,8 @@
 import { GoogleSheetsData, googleSheetsDataSchema } from "../../shared/schema";
 import { createSign } from "crypto";
+import { alertAdmin } from "./admin-alert";
 import {
-  assertWroteFromColumnA,
+  idx as schemaIdx,
   buildRow,
   buildSpan,
   cell,
@@ -570,42 +571,105 @@ export class GoogleSheetsService {
       // 이탈했다 돌아온 분은 **자기 행을 다시 쓴다**. 새 행을 만들면 결제대기가 사람 수보다
       // 부풀고, 나중에 어느 행이 진짜인지 알 수 없게 된다.
       const isReuse = typeof reuseRow === 'number' && reuseRow > 1;
-      // 넓은 범위로 append 하면 구글이 그 안에서 '표'를 찾아 **표의 첫 열부터** 쓴다.
-      // 2026-08-23 에 26건이 A가 아니라 L열부터 기록됐다. 앵커를 A열 하나로 좁히고,
-      // INSERT_ROWS 로 새 행을 밀어 넣어 기존 값을 덮지 않는다. 시작 열은 아래에서 검증한다.
-      const range = isReuse
-        ? encodeURIComponent(rowRange(APPLICATIONS_TAB, reuseRow))
-        : encodeURIComponent(`'${APPLICATIONS_TAB}'!A:A`);
-      const url = isReuse
-        ? `${this.baseUrl}/${this.spreadsheetId}/values/${range}?valueInputOption=RAW`
-        : `${this.baseUrl}/${this.spreadsheetId}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-      const response = await fetch(url, {
-        method: isReuse ? 'PUT' : 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`❌ Google Sheets API 응답 오류 (${response.status}):`, errorText);
-        throw new Error(`Google Sheets 저장 실패: ${response.status} - ${errorText}`);
+      if (isReuse) {
+        await this.putRow(token, reuseRow as number, values[0]);
+        const ok = await this.verifyRow(reuseRow as number, values[0]);
+        if (!ok) {
+          console.error(`⚠ 재사용 행 기록 검증 실패: ${reuseRow}행 (${applicationData.name})`);
+        }
+        console.log(`✅ 신청명단 재사용 기록: ${applicationData.name} (${applicationData.programTitle}) -> ${reuseRow}행`);
+        return reuseRow as number;
       }
 
-      const result = await response.json();
-      console.log(
-        `✅ Google Sheets ${isReuse ? '재사용' : '저장'} 성공: ${applicationData.name} (${applicationData.programTitle})`
-        + (isReuse ? ` -> ${reuseRow}행` : '')
+      // ── 신규 행
+      // ⛔ append 를 쓰지 않는다. append 는 준 범위 안에서 구글이 '표'를 찾아 **표의 첫
+      //   열부터** 쓰는데, 그 판정이 시트 모양(빈 구분선 K열·기본 필터 A1:J307 등)에 따라
+      //   달라진다. 2026-08-23 에 26건이 A가 아니라 L열부터 기록됐다.
+      //   -> 다음 빈 행을 **직접 정해서 PUT** 한다. 표 탐지가 개입할 여지를 없앤다.
+      //
+      // 동시에 두 명이 신청하면 같은 행을 집을 수 있다. 그래서 쓴 뒤 **되읽어 내 값인지
+      // 확인**하고, 아니면 다음 행으로 물러난다(낙관적 동시성).
+      let target = await this.nextEmptyRow();
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await this.putRow(token, target, values[0]);
+        if (await this.verifyRow(target, values[0])) {
+          console.log(`✅ 신청명단 기록: ${applicationData.name} (${applicationData.programTitle}) -> ${target}행`);
+          return target;
+        }
+        console.error(`⚠ 신청명단 ${target}행 기록 검증 실패 (${attempt + 1}/4) — 다음 행으로 재시도`);
+        target = Math.max(target + 1, await this.nextEmptyRow());
+      }
+
+      // 4번 다 실패했다. ⛔ **여기서 결제를 막지 않는다.**
+      //   돈 내려는 사람을 막는 것도 8/22 처럼 치명적이다. 행 번호 없이 결제를 진행시키고,
+      //   신청 내용 전부를 관리자에게 즉시 보낸다(수기로 복구할 수 있게).
+      console.error(`❌ 신청명단 기록 실패 — 결제는 계속 진행합니다: ${applicationData.name}`);
+      void alertAdmin(
+        '신청명단 기록 실패 (결제는 진행됨)',
+        [
+          `${applicationData.name} / ${formatPhoneNumber(applicationData.phone)}`,
+          `${applicationData.region} ${applicationData.chapter}`,
+          `과목 : ${applicationData.programTitle}`,
+          `참여 : ${applicationData.participationType}`,
+          applicationData.email ? `메일 : ${applicationData.email}` : '',
+          payer?.name ? `결제자 : ${payer.name} / ${formatPhoneNumber(payer.phone || '')}` : '',
+          '',
+          '시트에 행이 만들어지지 않았습니다. 결제는 정상 진행되니',
+          '위 내용으로 신청명단에 직접 추가해 주세요.',
+        ].filter(Boolean).join('\n')
       );
-
-      if (isReuse) return reuseRow as number;
-
-      // 결제 승인 후 이 행의 신청현황 열을 갱신해야 하므로 행 번호를 돌려준다.
-      // 행 번호만 뽑지 않는다. **시작 열이 A인지** 반드시 본다 - 아니면 던진다.
-      // (2026-08-23 에 'L96:AF96' 이 왔는데 행 번호 96만 읽고 그대로 진행했다.)
-      return assertWroteFromColumnA(result?.updates?.updatedRange || '');
+      return 0;
     } catch (error) {
       console.error('❌ Google Sheets 저장 실패:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 신청명단의 다음 빈 행 번호. A열(신청일시)만 읽는다 — 가볍고, 표 탐지를 안 탄다.
+   * A열은 신청 행이면 반드시 값이 있으므로 이걸로 끝을 잡는다.
+   */
+  private async nextEmptyRow(): Promise<number> {
+    const range = encodeURIComponent(`'${APPLICATIONS_TAB}'!A:A`);
+    const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
+    const res = await fetch(`${this.baseUrl}/${this.spreadsheetId}/values/${range}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`다음 빈 행 조회 실패: ${res.status}`);
+    const rows = ((await res.json()) as { values?: string[][] }).values || [];
+    return Math.max(rows.length + 1, 2);   // 1행은 머리글
+  }
+
+  /** 한 행을 A열부터 스키마 폭만큼 통째로 쓴다. 범위와 값 길이가 항상 같다. */
+  private async putRow(token: string, row: number, values: string[]): Promise<void> {
+    const range = encodeURIComponent(rowRange(APPLICATIONS_TAB, row));
+    const res = await fetch(
+      `${this.baseUrl}/${this.spreadsheetId}/values/${range}?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [values] }),
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`신청명단 ${row}행 기록 실패 ${res.status}: ${text.slice(0, 200)}`);
+    }
+  }
+
+  /**
+   * 방금 쓴 행을 **되읽어** 내 값이 그 자리에 있는지 본다.
+   * 열이 밀렸거나, 동시에 들어온 다른 신청이 같은 행을 덮었으면 여기서 걸린다.
+   */
+  private async verifyRow(row: number, values: string[]): Promise<boolean> {
+    try {
+      const back = await this.readApplicationRows(rowRange(APPLICATIONS_TAB, row));
+      const got = back[0] || [];
+      const keys: Array<Parameters<typeof getCol>[1]> = ['신청일시', '과목명', '멤버명', '연락처(H.P)'];
+      return keys.every((k) => getCol(got, k) === String(values[schemaIdx(k)] ?? '').trim());
+    } catch (error: any) {
+      console.error(`⚠ ${row}행 되읽기 실패:`, error?.message || error);
+      return false;
     }
   }
 

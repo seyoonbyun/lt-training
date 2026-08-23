@@ -333,18 +333,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const application = await storage.submitApplication(item.data, reuseRow);
         const sheetRow = (application as any).sheetRow as number | undefined;
-        if (typeof sheetRow === "number" && sheetRow > 1) {
-          sheetRows.push(sheetRow);
-          rowAmounts.push(item.program.price);
-          recorded.push(item.program);
-        } else {
-          console.error("⚠ 신청 행이 기록되지 않았습니다:", item.program.title);
-        }
+        // ⛔ 행이 안 만들어져도 **결제는 진행한다.** 신청은 유효하고, 돈 내려는 분을
+        //   막는 것이 훨씬 나쁘다. 행 번호만 0 으로 두고 결제 기록 단계에서 건너뛴다.
+        //   기록 실패는 googleSheetsService 가 관리자에게 문자로 알린다.
+        sheetRows.push(typeof sheetRow === "number" && sheetRow > 1 ? sheetRow : 0);
+        rowAmounts.push(item.program.price);
+        recorded.push(item.program);
       }
 
-      if (sheetRows.length === 0) {
-        console.error("❌ 신청이 시트에 기록되지 않아 결제를 중단합니다:", titles.join(", "));
-        return res.status(500).json({ message: "신청 기록에 실패했습니다. 내셔널 오피스로 문의해 주세요." });
+      const missingRows = sheetRows.filter((r) => !r).length;
+      if (missingRows) {
+        console.error(`⚠ 신청 행 ${missingRows}건이 기록되지 않았습니다 (결제는 계속): ${titles.join(", ")}`);
       }
 
       const amount = rowAmounts.reduce((sum, price) => sum + price, 0);
@@ -389,7 +388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerMobilePhone: String(applicant.phone || "").replace(/[^0-9]/g, ""),
         sessions: recorded.map((p: any) => ({ title: p.title, price: p.price })),
         skippedDuplicates: duplicateTitles,
-        resumeToken: resumeTokenFor(sheetRows),
+        resumeToken: resumeTokenFor(sheetRows.filter((r) => r > 1)),
       });
     } catch (error) {
       console.error("결제 준비 실패:", error);
@@ -542,8 +541,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const recipients: Array<{ name: string; phone: string; email: string; programTitle: string; trainingType: string; sheetRow?: number }> = [];
 
       submitted.forEach((application: any, index: number) => {
-        const sheetRow = application?.sheetRow as number | undefined;
-        if (typeof sheetRow !== "number" || sheetRow <= 1) return;
+        const raw = application?.sheetRow as number | undefined;
+        // 행이 없어도 건너뛰지 않는다. 그 사람만 조용히 빠지면 결제 금액이 줄고,
+        // 본인은 신청된 줄 알지만 명단에 없다. 결제는 그대로 하고 행만 0 으로 둔다.
+        const sheetRow = typeof raw === "number" && raw > 1 ? raw : 0;
         const title = validated[index]?.programTitle || "";
         sheetRows.push(sheetRow);
         rowAmounts.push(priceByTitle.get(title) || 0);
@@ -558,9 +559,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
 
-      if (sheetRows.length === 0) {
-        console.error("❌ 일괄 신청이 시트에 기록되지 않아 결제를 중단합니다:", requestedTitles.join(", "));
-        return res.status(500).json({ message: "신청 명단 기록에 실패했습니다. 내셔널 오피스로 문의해 주세요." });
+      const missingBulk = sheetRows.filter((r) => !r).length;
+      if (missingBulk) {
+        console.error(`⚠ 일괄 신청 ${missingBulk}건이 시트에 기록되지 않았습니다 (결제는 계속): ${requestedTitles.join(", ")}`);
       }
 
       const quantity = sheetRows.length;
@@ -611,7 +612,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerMobilePhone: String(payer.phone || "").replace(/[^0-9]/g, ""),
         sessions: distinctTitles.map((title) => ({ title, price: priceByTitle.get(title) || 0 })),
         skippedDuplicates: duplicateNames,
-        resumeToken: resumeTokenFor(sheetRows),
+        resumeToken: resumeTokenFor(sheetRows.filter((r) => r > 1)),
       });
     } catch (error: any) {
       console.error("일괄 결제 준비 실패:", error);
@@ -867,6 +868,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rowsToMark = order.sheetRows?.length ? order.sheetRows : [order.sheetRow || 0];
       for (let i = 0; i < rowsToMark.length; i++) {
         const row = rowsToMark[i];
+        if (!row || row <= 1) continue;   // 신청 행이 못 만들어진 건 — 결제는 유효하다
         // 다과목 개별 신청은 행마다 금액이 다를 수 있어 rowAmounts 를 먼저 본다.
         const rowAmount = order.rowAmounts?.[i]
           ?? (order.quantity ? order.amount / order.quantity : order.amount);
