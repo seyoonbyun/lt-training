@@ -21,7 +21,7 @@
  *    2차를 보내면 안 된다 — 실제 고객에게 나가는 문자다. 로그로 남기고 사람이 판단한다.
  *
  * 환경변수
- *   PAYMENT_EXPIRY_ENABLED       on 이어야 돈다 (기본 off - 승인 전까지 안 돈다)
+ *   PAYMENT_EXPIRY_ENABLED       off 로 끈다 (기본 on - 2026-08-23 승인)
  *   PAYMENT_EXPIRY_GAP_HOURS     각 단계 간격, 기본 12 (시간)
  *   PAYMENT_EXPIRY_MAX_PER_RUN   한 번에 처리할 묶음 수, 기본 40
  *                                (솔라피 한도를 넘기면 뒷건이 조용히 안 나간다 - 2026-08-23)
@@ -160,9 +160,9 @@ export async function runPaymentExpiry(now = new Date()): Promise<FollowupResult
 export function startPaymentExpiryScheduler() {
   if (timer) return;
 
-  const enabled = (process.env.PAYMENT_EXPIRY_ENABLED || "off").toLowerCase() === "on";
+  const enabled = (process.env.PAYMENT_EXPIRY_ENABLED || "on").toLowerCase() !== "off";
   if (!enabled) {
-    console.log("[미결제] PAYMENT_EXPIRY_ENABLED 가 on 이 아닙니다 — 스케줄러를 켜지 않습니다.");
+    console.log("[미결제] PAYMENT_EXPIRY_ENABLED=off — 스케줄러를 켜지 않습니다.");
     return;
   }
 
