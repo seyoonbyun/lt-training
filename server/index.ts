@@ -5,6 +5,8 @@ import { serveStatic, log } from "./static-serve";
 import { maintenance, getPreviewToken } from "./middleware/maintenance";
 import { startReminderScheduler } from "./services/reminder";
 import { startUnpaidNudgeScheduler } from "./services/unpaid-nudge";
+import { startPaymentExpiryScheduler } from "./services/payment-expiry";
+import { startUnpaidAlertScheduler } from "./services/unpaid-alert";
 
 const app = express();
 app.set('trust proxy', true);
@@ -131,6 +133,9 @@ process.on('exit', (code) => {
     // 트레이닝 당일 오전 10시(KST) 참여 안내 리마인드
     startReminderScheduler();
     startUnpaidNudgeScheduler();
+    // 오래된 미결제 정리(2차 안내 후 만료 표시)와 결제대기 급증 알림.
+    startPaymentExpiryScheduler();
+    startUnpaidAlertScheduler();
   });
 
   setInterval(() => {

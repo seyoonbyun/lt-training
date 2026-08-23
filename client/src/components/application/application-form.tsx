@@ -25,6 +25,7 @@ import { openTossPayment, type PreparedOrder } from "@/lib/toss-payment";
 import { Check } from "lucide-react";
 import { REGIONS, chaptersOf, OTHER_CHAPTER } from "@/lib/regions";
 import type { TrainingProgram, SecondaryProgram } from "@shared/schema";
+import { PaymentInterruptedDialog } from "./payment-interrupted";
 
 const applicationSchema = z.object({
   region: z.string().min(1, "지역을 선택해주세요"),
@@ -55,6 +56,8 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
   // 신청서 한 장으로 여러 과목을 담는다. 과목 하나만 골라도, 열 개를 다 골라도 결제는 한 번이다.
   const [selectedTitles, setSelectedTitles] = useState<string[]>(initialTitles);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  // 결제창을 닫으면 토스트 대신 이 화면이 남는다 — 그 자리에서 결제를 이어갈 수 있다.
+  const [interrupted, setInterrupted] = useState<{ token?: string; reason?: string } | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -114,13 +117,8 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
         await openTossPayment(order);
       } catch (error: any) {
         // 사용자가 결제창을 닫은 경우도 여기로 온다.
-        toast({
-          title: "결제가 진행되지 않았습니다",
-          description:
-            error?.message ||
-            "결제창이 닫혔습니다. 신청은 접수되었으나 결제를 완료하셔야 확정됩니다.",
-          variant: "destructive",
-        });
+        // 토스트는 떴다 사라져 아무것도 남기지 못한다 — 이어하기 버튼이 있는 화면을 띄운다.
+        setInterrupted({ token: (order as any)?.resumeToken, reason: error?.message });
       }
     },
     onError: (error: any) => {
@@ -151,6 +149,12 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
 
   return (
     <div className="max-w-2xl mx-auto">
+      <PaymentInterruptedDialog
+        open={interrupted !== null}
+        onClose={() => setInterrupted(null)}
+        resumeToken={interrupted?.token}
+        reason={interrupted?.reason}
+      />
       <Card className="border-red-200 dark:border-red-800">
         <CardHeader 
           className="bg-red-600 dark:bg-red-600" 

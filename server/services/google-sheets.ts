@@ -5,6 +5,12 @@ import { createSign } from "crypto";
 const GOOGLE_SHEETS_API_KEY = process.env.GOOGLE_SHEETS_API_KEY || "";
 const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID || "";
 
+/**
+ * 결제 없이 방치된 신청을 정리했을 때 J열에 적는 값.
+ * 집계에서만 빠지고, 결제는 그대로 이어서 하실 수 있다.
+ */
+export const EXPIRED_MARK = '결제만료';
+
 // 모듈 레벨 액세스 토큰 캐시 (스코프별로 구분)
 const _cachedTokens: Map<string, { token: string; expiresAt: number }> = new Map();
 
@@ -618,6 +624,19 @@ export class GoogleSheetsService {
   private isPaidRow(row: string[]): boolean {
     const status = String(row[9] || '').trim();
     return status === '완료' || status === '결제완료';
+  }
+
+  /**
+   * 결제 없이 오래 방치돼 정리한 행인가. J열이 '결제만료'다.
+   *
+   * ⛔ 만료는 **집계에서만** 빼는 표시다. 결제를 막는 잠금이 아니다.
+   *   isPaidRow / isCancelledRow 어느 쪽에도 걸리지 않으므로 중복 판정·행 재사용·
+   *   「결제 이어하기」는 전과 똑같이 동작한다 — 만료된 뒤에 링크로 결제하시면
+   *   그 행이 그대로 '완료'로 바뀐다.
+   *   (돈을 안 낸 사람을 막는 규칙은 전부 치명적이다. 2026-08-22 에 57명이 잠겼다.)
+   */
+  isExpiredRow(row: string[]): boolean {
+    return String(row[9] || '').trim() === EXPIRED_MARK;
   }
 
   /**
@@ -1455,6 +1474,8 @@ export class GoogleSheetsService {
         // 취소된 신청은 집계·최근 신청 어디에도 넣지 않는다.
         // 정원·마감 집계와 같은 기준(R열)을 써야 화면끼리 숫자가 안 어긋난다.
         if (this.isCancelledRow(row)) return;
+        // 만료된 결제대기도 뺀다. 남겨 두면 결제대기가 끝없이 쌓여 완료율이 지표가 되지 못한다.
+        if (this.isExpiredRow(row)) return;
         if (row.length >= 5) {
           const submittedAt = row[0] || '';        // A열: 신청일시
           const rawProgram = row[1] || '미지정';   // B열: 과목명

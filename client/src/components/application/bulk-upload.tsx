@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { REGIONS, chaptersOf, OTHER_CHAPTER } from "@/lib/regions";
 import { openTossPayment } from "@/lib/toss-payment";
+import { PaymentInterruptedDialog } from "./payment-interrupted";
 import { Check, Plus, Trash2, Users, Copy } from "lucide-react";
 import type { SecondaryProgram } from "@shared/schema";
 
@@ -67,6 +68,8 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
   });
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  // 결제창을 닫으면 토스트 대신 이 화면이 남는다 — 명단을 다시 입력하지 않고 결제만 이어간다.
+  const [interrupted, setInterrupted] = useState<{ token?: string; reason?: string } | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -155,12 +158,8 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
       try {
         await openTossPayment(order);
       } catch (error: any) {
-        toast({
-          title: "결제가 진행되지 않았습니다",
-          description:
-            error?.message || "결제창이 닫혔습니다. 신청은 접수되었으나 결제를 완료하셔야 확정됩니다.",
-          variant: "destructive",
-        });
+        // 토스트는 떴다 사라진다. 단체 신청은 명단을 다시 입력해야 해서 이탈 손실이 더 크다.
+        setInterrupted({ token: order?.resumeToken, reason: error?.message });
       }
     },
     onError: (error: any) => {
@@ -304,6 +303,12 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      <PaymentInterruptedDialog
+        open={interrupted !== null}
+        onClose={() => setInterrupted(null)}
+        resumeToken={interrupted?.token}
+        reason={interrupted?.reason}
+      />
       <Card className="border-red-200 dark:border-red-800">
         <CardHeader className="bg-red-600" style={{ backgroundColor: "#dc2626" }}>
           <CardTitle className="flex items-center gap-2 text-white" style={{ color: "#ffffff" }}>

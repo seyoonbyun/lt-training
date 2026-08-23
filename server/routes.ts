@@ -14,7 +14,7 @@ import {
 } from "./services/toss-payments";
 import type { PendingOrder } from "./services/toss-payments";
 import { sendEnrollmentNotice } from "./services/enrollment-notify";
-import { verifyResumeToken } from "./services/resume-token";
+import { createResumeToken, verifyResumeToken } from "./services/resume-token";
 
 /**
  * 결제 승인 뒤 참여 안내를 문자·이메일로 함께 보낸다.
@@ -31,6 +31,26 @@ async function sendEnrollmentSms(order: PendingOrder) {
     kind: "confirm",
     context: `(주문 ${order.orderId})`,
   });
+}
+
+/**
+ * 결제창에서 이탈한 그 순간 화면에서 바로 결제를 이어갈 수 있도록,
+ * 주문을 내려줄 때 「결제 이어하기」 토큰을 함께 준다.
+ *
+ * 예전에는 이탈하면 토스트 한 줄이 떴다 사라지고 끝이었다 — 실수로 창을 닫은 분도
+ * 다음 날 11시 안내 문자를 기다려야 했다(2026-08-22 오픈 당일 결제대기 57건).
+ *
+ * ⛔ 여기서 실패해도 결제를 막지 않는다. 이어하기는 보조 장치지 결제 경로가 아니다.
+ *   (SESSION_SECRET 이 없으면 createResumeToken 이 던진다.)
+ */
+function resumeTokenFor(rows: number[]): string | undefined {
+  if (!rows || rows.length === 0) return undefined;
+  try {
+    return createResumeToken(rows);
+  } catch (error: any) {
+    console.error("이어하기 토큰 생성 실패 (결제는 그대로 진행):", error?.message || error);
+    return undefined;
+  }
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -367,6 +387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerMobilePhone: String(applicant.phone || "").replace(/[^0-9]/g, ""),
         sessions: recorded.map((p: any) => ({ title: p.title, price: p.price })),
         skippedDuplicates: duplicateTitles,
+        resumeToken: resumeTokenFor(sheetRows),
       });
     } catch (error) {
       console.error("결제 준비 실패:", error);
@@ -587,6 +608,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerMobilePhone: String(payer.phone || "").replace(/[^0-9]/g, ""),
         sessions: distinctTitles.map((title) => ({ title, price: priceByTitle.get(title) || 0 })),
         skippedDuplicates: duplicateNames,
+        resumeToken: resumeTokenFor(sheetRows),
       });
     } catch (error: any) {
       console.error("일괄 결제 준비 실패:", error);

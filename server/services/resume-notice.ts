@@ -8,7 +8,7 @@
  * 예전에는 그 상태에서 다시 신청하면 자기 행에 걸려 튕겼고, 단체 신청은 명단 15명을
  * 다시 입력해야 했다. 이제는 링크 한 줄로 결제만 이어서 하면 된다.
  */
-import { googleSheetsService } from "./google-sheets";
+import { googleSheetsService, EXPIRED_MARK } from "./google-sheets";
 import { createResumeToken } from "./resume-token";
 
 const SITE = process.env.PUBLIC_SITE_URL || "https://ltt-bnikorea.com";
@@ -87,8 +87,10 @@ export async function findUnpaidGroups(): Promise<UnpaidGroup[]> {
     const row = rows[i];
     const paid = String(row[9] || "").trim();
     const cancelled = String(row[17] || "").trim();
-    if (paid === "완료" || paid === "결제완료" || cancelled) {
-      current = null; // 결제/취소된 행을 만나면 묶음을 끊는다
+    // 만료 처리한 행은 다시 안내하지 않는다. 2차 안내까지 나간 뒤 정리한 행이다
+    // (그래도 결제는 막히지 않는다 — 링크로 결제하시면 그대로 확정된다).
+    if (paid === "완료" || paid === "결제완료" || paid === EXPIRED_MARK || cancelled) {
+      current = null; // 결제/취소/만료된 행을 만나면 묶음을 끊는다
       continue;
     }
 
@@ -308,4 +310,57 @@ export async function stampNudged(rows: number[], _now = new Date()): Promise<vo
       values: [[NUDGE_MARK]],
     }))
   );
+}
+
+/**
+ * 묶음의 모든 행을 J열 '결제만료'로 표시한다.
+ *
+ * ⛔ 이 표시는 **집계에서 빼기 위한 것**이지 잠금이 아니다. 이 행은 여전히
+ *   결제 가능(isRowPayable) 상태이고, 2차 안내 문자의 링크로 결제하시면 '완료'로 바뀐다.
+ * ⛔ 묶음의 **모든 행**에 찍어야 한다. 한 행만 남기면 다음 실행에서 그 행이 새 묶음으로
+ *   잡혀 같은 분에게 안내가 또 나간다 (V열 표시와 같은 함정).
+ */
+export async function markExpired(rows: number[]): Promise<void> {
+  await googleSheetsService.writeApplicationCells(
+    rows.map((row) => ({
+      range: `'${SHEET_NAME}'!J${row}`,
+      values: [[EXPIRED_MARK]],
+    }))
+  );
+}
+
+/**
+ * 2차(마지막) 안내 문자.
+ *
+ * ⭐ 정리한다는 사실을 알리되, **결제 경로가 닫히지 않는다**는 것을 분명히 적는다.
+ *   "만료됐다"만 읽고 포기하시면 안 된다.
+ */
+export function composeFinalNoticeSms(
+  group: UnpaidGroup,
+  s: GroupSummary,
+  link: string,
+  now = new Date()
+): string {
+  const bulk = s.memberCount > 1;
+  const when = submittedDateLabel(group.submittedAtMs);
+  const urgent = urgencyLine(s, now);
+  const what = bulk
+    ? `${group.chapter} 챕터 단체 신청 ${s.memberCount}명 / ${s.quantity}건`
+    : `'${shortTitle(s.items[0].title)}'`;
+
+  return `[BNI Korea] LT 트레이닝 결제 안내 (재안내)
+
+${group.payerName} 대표님, 안녕하세요.
+BNI 코리아 내셔널 오피스입니다.
+
+${when} 신청하신 ${what}의 결제가 아직 완료되지 않았습니다.
+
+신청 내역은 그대로 남아 있으며, 아래 링크에서 지금도 결제하실 수 있습니다. 다시 입력하실 내용은 없습니다.
+
+▶ ${link}
+
+금액 : ${won(s.amount)}원
+
+결제가 확인되지 않은 건은 신청 현황 집계에서 제외되나, 링크로 결제하시면 그대로 확정됩니다.${urgent}
+문의 : 02-6261-8838`;
 }
