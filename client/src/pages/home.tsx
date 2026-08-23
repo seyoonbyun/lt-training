@@ -252,6 +252,7 @@ const NOTICE_QA: { q: string; a: React.ReactNode }[] = [
         수강 시작 3일 전까지 요청하시면 전액 환불됩니다. 수강 시작일 당일과 강의 시작 후에는 환불이 불가합니다.
         페이지 맨 아래 「취소 · 환불 접수」에서 신청해 주세요. 접수되면 확인 안내가 발송되고,
         담당자 처리가 끝나면 완료 안내를 한 번 더 보내드립니다.
+        <strong className="text-foreground"> 취소 · 환불 처리는 영업일 기준 48시간 이내 처리됩니다.</strong>
         <NoticeSample kind="refund" label="① 접수 즉시 — 접수 확인" />
         <NoticeSample kind="refundDone" label="② 담당자 처리 후 — 환불 완료" />
       </>
