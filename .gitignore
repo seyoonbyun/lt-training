@@ -6,6 +6,9 @@ dist/
 *.zip
 *.mp4
 *.png
+# ⛔ 카카오·페이스북 링크 미리보기 이미지. *.png 에 걸려 깃에 안 올라가는 바람에
+#   배포본에 파일이 없었고, 서버가 대신 index.html 을 돌려줘서 미리보기가 빈 칸이었다.
+!client/public/og-image.png
 *.jpg
 *.jpeg
 config/replit/
