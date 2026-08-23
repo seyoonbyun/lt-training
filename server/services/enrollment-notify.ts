@@ -11,6 +11,7 @@
 import { googleSheetsService } from "./google-sheets";
 import { isSolapiConfigured, sendMessages } from "./solapi";
 import { isMailerConfigured, sendMails } from "./mailer";
+import { cell } from "./sheet-schema";
 import { buildAttendeeMessages, buildPayerMessage } from "./enrollment-sms";
 import { buildAttendeeMails, buildPayerMail, type NoticeKind } from "./enrollment-email";
 import type { ProgramInfo, SmsRecipient } from "./enrollment-notice";
@@ -58,13 +59,15 @@ export async function sendEnrollmentNotice(target: NotifyTarget, programMap?: Ma
       // 일괄 신청의 수강자 연락처는 선택값이다. 빈 분은 보낼 수단이 없으므로 남겨서 알린다.
       console.warn(`[문자] 연락처가 없어 건너뛴 수강자 ${noPhone.length}명 ${context}: ${noPhone.join(", ")}`);
     }
-    // 대리 신청의 결제자. 본인이 수강자로도 들어 있으면 두 통이 되므로 그때는 보내지 않는다.
+    // 대리 신청의 결제자. **수강자로도 들어 있어도 반드시 따로 보낸다.**
+    // ⛔ 예전에는 같은 번호면 건너뛰었다. 그래서 8/22 단체 2건(792,000원·66,000원)의
+    //   결제자가 전체 주문 내역도, 주문번호도, "취소하려면 어느 과목 어느 수강자인지
+    //   알려달라" 는 안내도 못 받았다. 그리고 나중에 결제자가 누구였는지 되찾을 경로도
+    //   그 문자 하나뿐이었는데 그게 없어서 못 찾았다.
+    //   같은 번호로 두 통이 가는 편이 낫다. 시트에 적힌 연락처에는 전부 보낸다.
     if (payer?.phone) {
-      const payerDigits = String(payer.phone).replace(/\D/g, "");
-      if (!messages.some((m) => m.to.replace(/\D/g, "") === payerDigits)) {
-        const pm = buildPayerMessage({ name: payer.name, phone: payer.phone }, recipients, byTitle, kind);
-        if (pm) messages.push(pm);
-      }
+      const pm = buildPayerMessage({ name: payer.name, phone: payer.phone }, recipients, byTitle, kind);
+      if (pm) messages.push(pm);
     }
 
     // ── 이메일
@@ -72,12 +75,10 @@ export async function sendEnrollmentNotice(target: NotifyTarget, programMap?: Ma
     if (noEmail.length > 0) {
       console.warn(`[메일] 주소가 없어 건너뛴 수강자 ${noEmail.length}명 ${context}: ${noEmail.join(", ")}`);
     }
+    // 메일도 같다. 수강자와 주소가 같아도 결제자 메일은 따로 보낸다.
     if (payer?.email) {
-      const payerAddr = String(payer.email).trim().toLowerCase();
-      if (!mails.some((m) => m.to.trim().toLowerCase() === payerAddr)) {
-        const pm = buildPayerMail({ name: payer.name, email: payer.email }, recipients, byTitle, kind);
-        if (pm) mails.push(pm);
-      }
+      const pm = buildPayerMail({ name: payer.name, email: payer.email }, recipients, byTitle, kind);
+      if (pm) mails.push(pm);
     }
 
     if (!isSolapiConfigured()) {
@@ -93,9 +94,44 @@ export async function sendEnrollmentNotice(target: NotifyTarget, programMap?: Ma
       sendMails(mails, context),
     ]);
 
+    // 결제완료 안내는 **시트에 발송 기록을 남긴다.**
+    // ⛔ 예전에는 연락처·이메일이 없어 못 보낸 사람을 console.warn 한 줄로만 남겼다.
+    //   Railway 로그는 아무도 안 본다 — 오늘 기준 수강자 27명이 메일을 한 통도 못 받았는데
+    //   시트만 보면 알 길이 없었다. 이제 "연락처 없음"이 그 행에 그대로 적힌다.
+    if (kind === "confirm") {
+      await recordSendResult(recipients, context);
+    }
+
     return { sms: { ...sms, noPhone }, mail: { ...mail, noEmail } };
   } catch (error: any) {
     console.error(`[안내] 발송 준비 실패 ${context}:`, error?.message || error);
     return { skipped: true, reason: "build-failed" as const };
+  }
+}
+
+
+/** 결제완료 안내의 발송 결과를 신청명단에 적는다. 실패해도 결제 흐름을 막지 않는다. */
+async function recordSendResult(recipients: SmsRecipient[], context: string) {
+  const stamp = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+  const SHEET_NAME = "2026 LTT 신청명단";
+  const cells: Array<{ range: string; values: string[][] }> = [];
+
+  for (const r of recipients) {
+    if (!r.sheetRow || r.sheetRow <= 1) continue;
+    cells.push({
+      range: cell(SHEET_NAME, r.sheetRow, "결제완료 문자 발송"),
+      values: [[String(r.phone || "").trim() ? stamp : "연락처 없음"]],
+    });
+    cells.push({
+      range: cell(SHEET_NAME, r.sheetRow, "결제완료 이메일 발송"),
+      values: [[String(r.email || "").trim() ? stamp : "이메일 없음"]],
+    });
+  }
+  if (!cells.length) return;
+
+  try {
+    await googleSheetsService.writeApplicationCells(cells);
+  } catch (error: any) {
+    console.error(`❌ [안내] 발송 기록 실패 ${context}: ${error?.message || error}`);
   }
 }

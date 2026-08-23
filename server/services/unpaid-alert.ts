@@ -17,7 +17,7 @@
  *     빠뜨리는 것보다 한 통 더 가는 쪽이 낫다.)
  *
  * 환경변수
- *   UNPAID_ALERT_ENABLED      off 면 끈다 (기본 on)
+ *   UNPAID_ALERT_ENABLED      on 이어야 돈다 (기본 off - 승인 전까지 안 돈다)
  *   UNPAID_ALERT_TO           받는 번호 (기본 01028033021)
  *   UNPAID_ALERT_PENDING      결제대기 임계 건수, 기본 10
  *   UNPAID_ALERT_RATE_FLOOR   완료율 하한 (0~1), 기본 0.6
@@ -27,6 +27,7 @@
  *   UNPAID_ALERT_COOLDOWN_H   같은 알림을 다시 보내기까지 시간, 기본 6
  *   UNPAID_ALERT_INTERVAL_MIN 점검 주기(분), 기본 60
  */
+import { get as getCol, sheetRange } from "./sheet-schema";
 import { sendMessages } from "./solapi";
 import { googleSheetsService, EXPIRED_MARK } from "./google-sheets";
 import { findUnpaidGroups, parseSubmittedAt } from "./resume-notice";
@@ -67,7 +68,7 @@ export interface UnpaidSnapshot {
  */
 export async function snapshotUnpaid(now = new Date()): Promise<UnpaidSnapshot> {
   const minHours = Number(process.env.UNPAID_ALERT_MIN_HOURS || process.env.UNPAID_NUDGE_MIN_HOURS || "2");
-  const rows = await googleSheetsService.readApplicationRows(`'${SHEET_NAME}'!A:R`);
+  const rows = await googleSheetsService.readApplicationRows(sheetRange(SHEET_NAME));
   const snap: UnpaidSnapshot = {
     total: 0, paid: 0, pending: 0, payers: 0, inFlight: 0, rate: 1, cancelled: 0, expired: 0,
   };
@@ -76,7 +77,7 @@ export async function snapshotUnpaid(now = new Date()): Promise<UnpaidSnapshot> 
     const row = rows[i];
     if (!row || row.length < 5) continue;
 
-    if (String(row[17] || "").trim()) { snap.cancelled += 1; continue; }
+    if (getCol(row, "취소")) { snap.cancelled += 1; continue; }
 
     const status = String(row[9] || "").trim();
     if (status === EXPIRED_MARK) { snap.expired += 1; continue; }
@@ -193,9 +194,11 @@ export async function runUnpaidAlert(now = new Date()): Promise<AlertRunResult> 
 export function startUnpaidAlertScheduler() {
   if (timer) return;
 
-  const enabled = (process.env.UNPAID_ALERT_ENABLED || "on").toLowerCase() !== "off";
+  // ⛔ 기본값을 **off** 로 둔다. 이 기능은 실제 고객에게 문자를 보내므로 문면·기준을
+  //   승인받기 전에는 배포만 되고 돌지 않아야 한다. 켤 때 Railway 에 UNPAID_ALERT_ENABLED=on 을 넣는다.
+  const enabled = (process.env.UNPAID_ALERT_ENABLED || "off").toLowerCase() === "on";
   if (!enabled) {
-    console.log("[결제대기알림] UNPAID_ALERT_ENABLED=off — 스케줄러를 켜지 않습니다.");
+    console.log("[결제대기알림] UNPAID_ALERT_ENABLED 가 on 이 아닙니다 — 스케줄러를 켜지 않습니다.");
     return;
   }
   const everyMin = Math.max(5, Number(process.env.UNPAID_ALERT_INTERVAL_MIN || "60"));

@@ -14,7 +14,7 @@ import { createResumeToken, verifyResumeToken } from "../server/services/resume-
 function row(paymentStatus: string, cancelled = ""): string[] {
   const r = new Array(18).fill("");
   r[1] = "LTT : 파운데이션 T."; r[4] = "홍길동"; r[5] = "01000000000";
-  r[9] = paymentStatus; r[17] = cancelled;
+  r[9] = paymentStatus; r[18] = cancelled;
   return r;
 }
 

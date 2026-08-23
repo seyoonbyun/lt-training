@@ -41,7 +41,7 @@ async function main() {
   const token = await getServiceAccountAccessToken(
     "https://www.googleapis.com/auth/spreadsheets.readonly"
   );
-  const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
+  const range = encodeURIComponent("'2026 LTT 신청명단'!A:Y");
   const res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${SHEET}/values/${range}`,
     { headers: { Authorization: `Bearer ${token}` } }
@@ -69,7 +69,7 @@ async function main() {
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const paid = String(row[9] || "").trim();
-    const cancelled = String(row[17] || "").trim();
+    const cancelled = String(row[18] || "").trim();  // S: 취소
     if (paid === "완료" || paid === "결제완료" || cancelled) {
       current = null; // 결제/취소된 행을 만나면 묶음을 끊는다
       continue;

@@ -1,5 +1,18 @@
 import { GoogleSheetsData, googleSheetsDataSchema } from "../../shared/schema";
 import { createSign } from "crypto";
+import {
+  assertWroteFromColumnA,
+  buildRow,
+  buildSpan,
+  cell,
+  get as getCol,
+  rowRange,
+  sheetRange,
+  span,
+} from "./sheet-schema";
+
+/** 신청명단 탭 이름. 열 위치는 sheet-schema.ts 가 유일한 출처다. */
+const APPLICATIONS_TAB = "2026 LTT 신청명단";
 
 // 보안: 환경변수에서 API 키 로드 (배포 전 필수)
 const GOOGLE_SHEETS_API_KEY = process.env.GOOGLE_SHEETS_API_KEY || "";
@@ -537,31 +550,35 @@ export class GoogleSheetsService {
       // 한 번에 쓰면 호출이 늘지 않는다. 재사용 대상은 미결제·미취소 행뿐이라
       // J~R 을 빈값으로 덮어도 잃을 값이 없다.
       const payer = applicationData.payer;
-      const values = [[
-        submittedAt,
-        applicationData.programTitle,
-        applicationData.region,
-        applicationData.chapter,
-        applicationData.name,
-        formatPhoneNumber(applicationData.phone),
-        applicationData.email,
-        applicationData.participationType,
-        applicationData.notes || '',
-        '', '', '', '', '', '', '', '', '',
-        payer?.name || '',
-        payer?.phone ? formatPhoneNumber(payer.phone) : '',
-        payer?.email || '',
-      ]];
+      // 스키마 순서대로 A열부터 마지막 열까지 **폭이 항상 맞는** 배열을 만든다.
+      // 값 개수와 범위 폭이 어긋나 옆 열로 밀리는 사고가 구조적으로 생길 수 없다.
+      const values = [buildRow({
+        '신청일시': submittedAt,
+        '과목명': applicationData.programTitle,
+        '지역': applicationData.region,
+        '챕터': applicationData.chapter,
+        '멤버명': applicationData.name,
+        '연락처(H.P)': formatPhoneNumber(applicationData.phone),
+        '이메일': applicationData.email,
+        '참여 방식': applicationData.participationType,
+        '특이사항 & 문의': applicationData.notes || '',
+        '결제자': payer?.name || '',
+        '결제자 연락처': payer?.phone ? formatPhoneNumber(payer.phone) : '',
+        '결제자 이메일': payer?.email || '',
+      })];
 
       // 이탈했다 돌아온 분은 **자기 행을 다시 쓴다**. 새 행을 만들면 결제대기가 사람 수보다
       // 부풀고, 나중에 어느 행이 진짜인지 알 수 없게 된다.
       const isReuse = typeof reuseRow === 'number' && reuseRow > 1;
+      // 넓은 범위로 append 하면 구글이 그 안에서 '표'를 찾아 **표의 첫 열부터** 쓴다.
+      // 2026-08-23 에 26건이 A가 아니라 L열부터 기록됐다. 앵커를 A열 하나로 좁히고,
+      // INSERT_ROWS 로 새 행을 밀어 넣어 기존 값을 덮지 않는다. 시작 열은 아래에서 검증한다.
       const range = isReuse
-        ? encodeURIComponent(`'2026 LTT 신청명단'!A${reuseRow}:U${reuseRow}`)
-        : encodeURIComponent("'2026 LTT 신청명단'!A:U");
+        ? encodeURIComponent(rowRange(APPLICATIONS_TAB, reuseRow))
+        : encodeURIComponent(`'${APPLICATIONS_TAB}'!A:A`);
       const url = isReuse
         ? `${this.baseUrl}/${this.spreadsheetId}/values/${range}?valueInputOption=RAW`
-        : `${this.baseUrl}/${this.spreadsheetId}/values/${range}:append?valueInputOption=RAW`;
+        : `${this.baseUrl}/${this.spreadsheetId}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
       const response = await fetch(url, {
         method: isReuse ? 'PUT' : 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -582,11 +599,10 @@ export class GoogleSheetsService {
 
       if (isReuse) return reuseRow as number;
 
-      // 결제 승인 후 이 행의 J열(결제완료)을 갱신해야 하므로 행 번호를 돌려준다.
-      // updatedRange 예: '2026 LTT 신청명단'!A15:I15
-      const updatedRange: string = result?.updates?.updatedRange || '';
-      const rowMatch = updatedRange.match(/![A-Z]+(\d+)/);
-      return rowMatch ? parseInt(rowMatch[1], 10) : 0;
+      // 결제 승인 후 이 행의 신청현황 열을 갱신해야 하므로 행 번호를 돌려준다.
+      // 행 번호만 뽑지 않는다. **시작 열이 A인지** 반드시 본다 - 아니면 던진다.
+      // (2026-08-23 에 'L96:AF96' 이 왔는데 행 번호 96만 읽고 그대로 진행했다.)
+      return assertWroteFromColumnA(result?.updates?.updatedRange || '');
     } catch (error) {
       console.error('❌ Google Sheets 저장 실패:', error);
       throw error;
@@ -609,7 +625,7 @@ export class GoogleSheetsService {
    * 같은 과목을 다시 신청할 수도 없다.
    */
   private isCancelledRow(row: string[]): boolean {
-    return String(row[17] || '').trim().length > 0;
+    return getCol(row, '취소').length > 0;
   }
 
   /**
@@ -622,7 +638,7 @@ export class GoogleSheetsService {
    * 돈을 낸 적 없는 행은 신청을 막지 않는다.
    */
   private isPaidRow(row: string[]): boolean {
-    const status = String(row[9] || '').trim();
+    const status = getCol(row, '신청현황');
     return status === '완료' || status === '결제완료';
   }
 
@@ -636,7 +652,7 @@ export class GoogleSheetsService {
    *   (돈을 안 낸 사람을 막는 규칙은 전부 치명적이다. 2026-08-22 에 57명이 잠겼다.)
    */
   isExpiredRow(row: string[]): boolean {
-    return String(row[9] || '').trim() === EXPIRED_MARK;
+    return getCol(row, '신청현황') === EXPIRED_MARK;
   }
 
   /**
@@ -678,7 +694,7 @@ export class GoogleSheetsService {
 
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
-      const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
+      const range = encodeURIComponent(sheetRange(APPLICATIONS_TAB));
       const response = await fetch(`${this.baseUrl}/${this.spreadsheetId}/values/${range}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -727,7 +743,7 @@ export class GoogleSheetsService {
     if (!this.spreadsheetId || rowNumbers.length === 0) return out;
 
     const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
-    const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
+    const range = encodeURIComponent(sheetRange(APPLICATIONS_TAB));
     const response = await fetch(`${this.baseUrl}/${this.spreadsheetId}/values/${range}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -744,12 +760,12 @@ export class GoogleSheetsService {
   }
 
   /**
-   * 참여 방식(H열)을 바꾼다. 「결제 이어하기」 화면에서 실시간 <-> 녹화본을 고를 때 쓴다.
+   * 참여 방식 열을 바꾼다. 「결제 이어하기」 화면에서 실시간 <-> 녹화본을 고를 때 쓴다.
    * 금액은 같고, 결제 후 안내 문자에 들어갈 링크가 갈리므로 결제 **전에** 정해져야 한다.
    */
   async updateParticipationType(row: number, participationType: string): Promise<void> {
     const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets');
-    const range = encodeURIComponent(`'2026 LTT 신청명단'!H${row}`);
+    const range = encodeURIComponent(cell(APPLICATIONS_TAB, row, '참여 방식'));
     const response = await fetch(
       `${this.baseUrl}/${this.spreadsheetId}/values/${range}?valueInputOption=RAW`,
       {
@@ -831,17 +847,26 @@ export class GoogleSheetsService {
       : '';
 
     const data = [
-      { range: `'2026 LTT 신청명단'!J${row}`, values: [['완료']] },
+      { range: cell(APPLICATIONS_TAB, row, '신청현황'), values: [['완료']] },
       {
-        range: `'2026 LTT 신청명단'!M${row}:P${row}`,
-        values: [[info.orderId, info.paymentKey, info.method || '', approvedAtKst]],
+        range: span(APPLICATIONS_TAB, row, '주문번호', '승인일시'),
+        values: [buildSpan('주문번호', '승인일시', {
+          '주문번호': info.orderId,
+          '결제키': info.paymentKey,
+          '결제수단': info.method || '',
+          '승인일시': approvedAtKst,
+        })],
       },
     ];
 
     if (info.payer?.name) {
       data.push({
-        range: `'2026 LTT 신청명단'!S${row}:U${row}`,
-        values: [[info.payer.name, formatPhoneNumber(info.payer.phone || ''), info.payer.email || '']],
+        range: span(APPLICATIONS_TAB, row, '결제자', '결제자 이메일'),
+        values: [buildSpan('결제자', '결제자 이메일', {
+          '결제자': info.payer.name,
+          '결제자 연락처': formatPhoneNumber(info.payer.phone || ''),
+          '결제자 이메일': info.payer.email || '',
+        })],
       });
     }
 
@@ -901,7 +926,7 @@ export class GoogleSheetsService {
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
       // 취소된 신청은 중복으로 보지 않는다 → R열(취소)까지 읽는다.
-      const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
+      const range = encodeURIComponent(sheetRange(APPLICATIONS_TAB));
       const url = `${this.baseUrl}/${this.spreadsheetId}/values/${range}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -937,7 +962,7 @@ export class GoogleSheetsService {
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
       // 취소된 신청은 중복으로 보지 않는다 → R열(취소)까지 읽는다.
-      const range = encodeURIComponent("'2026 LTT 신청명단'!A:R");
+      const range = encodeURIComponent(sheetRange(APPLICATIONS_TAB));
       const url = `${this.baseUrl}/${this.spreadsheetId}/values/${range}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -1288,8 +1313,8 @@ export class GoogleSheetsService {
     }
 
     try {
-      // ⛔ A:J 까지만 읽으면 R열(취소)을 못 본다 — 취소한 신청이 대시보드에 계속 잡힌다.
-      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:R?key=${this.apiKey}`;
+      // ⛔ A:J 까지만 읽으면 X열(취소)을 못 본다 — 취소한 신청이 대시보드에 계속 잡힌다.
+      const url = `${this.baseUrl}/${this.spreadsheetId}/values/${encodeURIComponent(sheetRange(APPLICATIONS_TAB))}?key=${this.apiKey}`;
       const response = await fetch(url);
 
       if (!response.ok) {
@@ -1615,7 +1640,7 @@ export class GoogleSheetsService {
 
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
-      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:R`;
+      const url = `${this.baseUrl}/${this.spreadsheetId}/values/${encodeURIComponent(sheetRange(APPLICATIONS_TAB))}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -1648,7 +1673,7 @@ export class GoogleSheetsService {
 
     try {
       const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
-      const url = `${this.baseUrl}/${this.spreadsheetId}/values/'2026 LTT 신청명단'!A:R`;
+      const url = `${this.baseUrl}/${this.spreadsheetId}/values/${encodeURIComponent(sheetRange(APPLICATIONS_TAB))}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });

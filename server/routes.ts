@@ -367,12 +367,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sheetRows,
         rowAmounts,
         // 승인 뒤 참여 링크 문자를 보낼 대상. 개별 신청은 신청자 본인이 과목 수만큼 들어간다.
-        recipients: recorded.map((p: any) => ({
+        recipients: recorded.map((p: any, i: number) => ({
           name: applicant.name,
           phone: applicant.phone,
           email: applicant.email,
           programTitle: p.title,
           trainingType: applicant.trainingType || "live",
+          // 발송 결과를 이 행에 적는다. sheetRows 와 recorded 는 같은 순서로 쌓인다.
+          sheetRow: sheetRows[i],
         })),
         status: "pending",
       });
@@ -537,7 +539,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rowAmounts: number[] = [];
       const recordedTitles: string[] = [];
       // 실제로 접수된 행만 문자 대상이 된다. 연락처를 안 적은 분은 뒤에서 걸러진다.
-      const recipients: Array<{ name: string; phone: string; email: string; programTitle: string; trainingType: string }> = [];
+      const recipients: Array<{ name: string; phone: string; email: string; programTitle: string; trainingType: string; sheetRow?: number }> = [];
 
       submitted.forEach((application: any, index: number) => {
         const sheetRow = application?.sheetRow as number | undefined;
@@ -552,6 +554,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: String(validated[index]?.email || "").trim(),
           programTitle: title,
           trainingType: validated[index]?.trainingType || "live",
+          sheetRow,
         });
       });
 

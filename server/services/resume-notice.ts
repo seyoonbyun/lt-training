@@ -8,6 +8,7 @@
  * 예전에는 그 상태에서 다시 신청하면 자기 행에 걸려 튕겼고, 단체 신청은 명단 15명을
  * 다시 입력해야 했다. 이제는 링크 한 줄로 결제만 이어서 하면 된다.
  */
+import { get as getCol, cell, sheetRange } from "./sheet-schema";
 import { googleSheetsService, EXPIRED_MARK } from "./google-sheets";
 import { createResumeToken } from "./resume-token";
 
@@ -48,7 +49,7 @@ export interface GroupSummary {
 }
 
 /** 재결제 안내 발송 시각을 적는 열. 값이 있으면 다시 보내지 않는다. */
-export const NUDGE_COL = "V";
+export const NUDGE_COL = "재결제 안내" as const;
 const NUDGE_INDEX = 21; // A=0
 const SHEET_NAME = "2026 LTT 신청명단";
 
@@ -78,7 +79,7 @@ export function parseSubmittedAt(v: string): number {
  *    (2026-08-22 권혁성/피경화 건에서 실제로 그렇게 묶였다).
  */
 export async function findUnpaidGroups(): Promise<UnpaidGroup[]> {
-  const rows = await googleSheetsService.readApplicationRows(`'${SHEET_NAME}'!A:V`);
+  const rows = await googleSheetsService.readApplicationRows(sheetRange(SHEET_NAME));
   const groups: UnpaidGroup[] = [];
   let current: UnpaidGroup | null = null;
   let lastAt = NaN;
@@ -86,7 +87,7 @@ export async function findUnpaidGroups(): Promise<UnpaidGroup[]> {
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const paid = String(row[9] || "").trim();
-    const cancelled = String(row[17] || "").trim();
+    const cancelled = getCol(row, "취소");
     // 만료 처리한 행은 다시 안내하지 않는다. 2차 안내까지 나간 뒤 정리한 행이다
     // (그래도 결제는 막히지 않는다 — 링크로 결제하시면 그대로 확정된다).
     if (paid === "완료" || paid === "결제완료" || paid === EXPIRED_MARK || cancelled) {
@@ -306,7 +307,7 @@ export const NUDGE_MARK = "문자발송완";
 export async function stampNudged(rows: number[], _now = new Date()): Promise<void> {
   await googleSheetsService.writeApplicationCells(
     rows.map((row) => ({
-      range: `'${SHEET_NAME}'!${NUDGE_COL}${row}`,
+      range: cell(SHEET_NAME, row, NUDGE_COL),
       values: [[NUDGE_MARK]],
     }))
   );

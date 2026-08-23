@@ -17,7 +17,7 @@
  *    (연락처가 없어 애초에 보낼 수 없는 묶음만 예외로 조용히 정리한다.)
  *
  * 환경변수
- *   PAYMENT_EXPIRY_ENABLED      off 면 끈다 (기본 on)
+ *   PAYMENT_EXPIRY_ENABLED      on 이어야 돈다 (기본 off - 승인 전까지 안 돈다)
  *   PAYMENT_EXPIRY_HOUR_KST     실행 시각, 기본 12 (KST)
  *                               ⛔ 10시=당일 리마인드, 11시=1차 재결제 안내가 쓴다. 겹치면
  *                                  같은 시트를 두고 두 작업이 경합한다.
@@ -25,6 +25,7 @@
  *   PAYMENT_EXPIRY_MAX_PER_RUN  한 번에 처리할 묶음 수, 기본 40
  *                               (솔라피 한도를 넘기면 뒷건이 조용히 안 나간다 — 2026-08-23)
  */
+import { cell } from "./sheet-schema";
 import { sendMessages } from "./solapi";
 import { googleSheetsService } from "./google-sheets";
 import {
@@ -172,7 +173,7 @@ export async function runPaymentExpiry(now = new Date()): Promise<ExpiryResult> 
 async function stampFinalNotice(rows: number[]): Promise<void> {
   await googleSheetsService.writeApplicationCells(
     rows.map((row) => ({
-      range: `'${SHEET_NAME}'!${NUDGE_COL}${row}`,
+      range: cell(SHEET_NAME, row, NUDGE_COL),
       values: [[FINAL_MARK]],
     }))
   );
@@ -181,9 +182,11 @@ async function stampFinalNotice(rows: number[]): Promise<void> {
 export function startPaymentExpiryScheduler() {
   if (timer) return;
 
-  const enabled = (process.env.PAYMENT_EXPIRY_ENABLED || "on").toLowerCase() !== "off";
+  // ⛔ 기본값을 **off** 로 둔다. 이 기능은 실제 고객에게 문자를 보내므로 문면·기준을
+  //   승인받기 전에는 배포만 되고 돌지 않아야 한다. 켤 때 Railway 에 PAYMENT_EXPIRY_ENABLED=on 을 넣는다.
+  const enabled = (process.env.PAYMENT_EXPIRY_ENABLED || "off").toLowerCase() === "on";
   if (!enabled) {
-    console.log("[결제만료] PAYMENT_EXPIRY_ENABLED=off — 스케줄러를 켜지 않습니다.");
+    console.log("[결제만료] PAYMENT_EXPIRY_ENABLED 가 on 이 아닙니다 — 스케줄러를 켜지 않습니다.");
     return;
   }
   const HOUR = Number(process.env.PAYMENT_EXPIRY_HOUR_KST || "12");

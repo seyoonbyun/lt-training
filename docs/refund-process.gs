@@ -2,9 +2,9 @@
  * 취소·환불 처리 — 담당자가 응답 시트 `환불처리` 열에 **완료** 를 넣으면 돌아간다.
  *
  * 하는 일
- *   1) 신청명단(`2026 LTT 신청명단`)에서 그 접수에 해당하는 행을 찾아 **R열(취소)** 에 시각을 적는다
- *      → 사이트의 신청자 수·`신청 현황` 탭·대시보드에서 그만큼 빠진다(서버가 R열을 보고 거른다)
- *   2) 신청자에게 **환불 완료 안내 문자**
+ *   1) 신청명단(`2026 LTT 신청명단`)에서 그 접수에 해당하는 행을 찾아 **S열(취소)** 에 시각을 적는다
+ *      → 사이트의 신청자 수·`신청 현황` 탭·대시보드에서 그만큼 빠진다(서버가 S열을 보고 거른다)
+ *   2) 접수자와 **취소된 수강자 전원**에게 환불 완료 안내 문자 (T열에 발송 시각)
  *   3) 정산 담당자(탐)에게 **처리 통보 문자**
  *   4) 어느 행을 취소했는지 응답 시트 `처리결과` 열에 남긴다
  *
@@ -76,7 +76,41 @@ var C_TIMESTAMP = 1, C_PAYER = 2, C_PHONE = 3, C_EMAIL = 4, C_TYPE = 5,
     C_AGREE = 11, C_STATUS = 12, C_RESULT = 13;
 
 /** 신청명단 열 (0-based, 배열 인덱스) */
-var A_TITLE = 1, A_NAME = 4, A_PHONE = 5, A_PAID = 9, A_ORDER = 12, A_CANCEL = 17;
+var A_TITLE = 1, A_NAME = 4, A_PHONE = 5, A_PAID = 9, A_ORDER = 11,
+    A_CANCEL = 18, A_CANCEL_SMS = 19;
+
+/**
+ * 이 스크립트가 만지는 열의 **기대 머리글**.
+ *
+ * 서버는 sheet-schema.ts 가 이름으로 열을 찾지만, Apps Script 는 그 코드를 못 쓰고
+ * 위 숫자를 손으로 박아야 한다. 시트에서 열을 하나만 넣거나 옮겨도 이 숫자가 전부
+ * 어긋나고, 그대로 두면 **엉뚱한 열에 취소를 적는다**. 그래서 쓰기 직전에 머리글을
+ * 확인하고 하나라도 다르면 아무것도 하지 않고 멈춘다.
+ * (2026-08-23 에 열이 11칸 밀려 기록됐는데 아무 경보가 없었다.)
+ */
+var A_EXPECT = {
+  1: '과목명', 4: '멤버명', 5: '연락처(H.P)', 9: '신청현황',
+  11: '주문번호', 18: '취소', 19: '취소 안내 문자 발송'
+};
+
+/** 0-based 인덱스 -> 열 문자 */
+function colLetter_(i) {
+  var n = i, out = '';
+  do { out = String.fromCharCode(65 + (n % 26)) + out; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return out;
+}
+
+/** 신청명단 머리글이 코드와 맞는지. 다르면 사유를 돌려준다(맞으면 빈 문자열). */
+function headerProblem_(apps) {
+  var head = apps.getRange(1, 1, 1, apps.getLastColumn()).getValues()[0];
+  var bad = [];
+  for (var key in A_EXPECT) {
+    var i = Number(key);
+    var got = String(head[i] || '').trim();
+    if (got !== A_EXPECT[key]) bad.push(colLetter_(i) + '열: 기대 "' + A_EXPECT[key] + '" / 실제 "' + got + '"');
+  }
+  return bad.join(' · ');
+}
 
 /**
  * 설치 점검 — 발송하지 않는다. 속성이 들어갔는지, 트리거가 걸렸는지만 본다.
@@ -101,7 +135,7 @@ function zzCheckSetup() {
   var apps = ss.getSheetByName(APPLICATION_TAB);
   Logger.log('응답 시트 ' + C_STATUS + '열 머리글 : ' + resp.getRange(1, C_STATUS).getValue() + ' (기대: 환불처리)');
   Logger.log('응답 시트 ' + C_RESULT + '열 머리글 : ' + resp.getRange(1, C_RESULT).getValue() + ' (기대: 처리결과)');
-  Logger.log('신청명단 R열 머리글 : ' + apps.getRange(1, A_CANCEL + 1).getValue() + ' (기대: 취소)');
+  Logger.log('신청명단 S열(취소) 머리글 : ' + apps.getRange(1, A_CANCEL + 1).getValue() + ' (기대: 취소)');
 }
 
 /** 문자 경로 시험 — **실제로 1통 나간다.** 받는 번호를 확인하고 돌릴 것. */
@@ -212,7 +246,7 @@ function processRefund_(row) {
     var byName = name && attendeeText.indexOf(name) !== -1;
     if (!byOrder && !byPhone && !byName) continue;
 
-    matched.push({ rowNumber: i + 1, title: title, name: name });
+    matched.push({ rowNumber: i + 1, title: title, name: name, phone: rowPhone });
   }
 
   if (!matched.length) {
@@ -220,7 +254,18 @@ function processRefund_(row) {
     notifySettlement_(
       '[LTT] 환불 처리했으나 신청 행을 찾지 못했습니다.\n' +
       '접수자 ' + payer + ' / ' + subjects.join(', ') + '\n' +
-      '대상 ' + attendeeText + '\n신청명단에서 직접 R열에 취소를 적어주세요.');
+      '대상 ' + attendeeText + '\n신청명단에서 직접 S열(취소)에 시각을 적어주세요.');
+    return;
+  }
+
+  // 쓰기 직전 머리글 확인. 어긋나면 아무것도 건드리지 않고 멈춘다.
+  var hp = headerProblem_(apps);
+  if (hp) {
+    resp.getRange(row, C_RESULT).setValue('중단 - 신청명단 열 구조가 코드와 다릅니다: ' + hp);
+    notifySettlement_(
+      '[LTT] 취소 처리를 중단했습니다.\n' +
+      '신청명단 열 구조가 스크립트와 다릅니다.\n' + hp + '\n' +
+      '열을 되돌리거나 스크립트의 A_* 숫자를 맞춘 뒤 다시 처리해 주세요.');
     return;
   }
 
@@ -228,9 +273,9 @@ function processRefund_(row) {
   var stamp = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm:ss');
   for (var m = 0; m < matched.length; m++) {
     apps.getRange(matched[m].rowNumber, A_CANCEL + 1).setValue(stamp);
-    // 결제완료(J) 열도 같이 바꾼다 — R열만 보면 명단을 눈으로 훑을 때 취소 건이 '완료' 로 보인다.
-    // 집계는 전부 R열로 판정하므로(신청 현황 탭 수식 · 서버) 이 값을 바꿔도 숫자는 달라지지 않는다.
-    // 결제 사실 자체는 주문번호·결제키·승인일시(M~P)에 그대로 남는다.
+    // 결제완료(J) 열도 같이 바꾼다 — S열만 보면 명단을 눈으로 훑을 때 취소 건이 '완료' 로 보인다.
+    // 집계는 전부 S열로 판정하므로(신청 현황 탭 수식 · 서버) 이 값을 바꿔도 숫자는 달라지지 않는다.
+    // 결제 사실 자체는 주문번호·결제키·승인일시(L~O)에 그대로 남는다.
     apps.getRange(matched[m].rowNumber, A_PAID + 1).setValue('취소완료');
   }
 
@@ -246,6 +291,26 @@ function processRefund_(row) {
     '· 신용카드 : 승인 취소 후 카드사 정책에 따라 1~2개월 소요\n' +
     '· 계좌이체 : 환불 승인 후 5~7영업일 내 처리\n\n' +
     '문의 : BNI코리아 내셔널 오피스 02-6261-8838');
+
+  // ── 취소된 수강자 각자에게도 보낸다.
+  // 중복이라고 건너뛰지 않는다. 접수자와 수강자가 같은 번호여도 각자 받는다.
+  // (결제자가 수강자 명단에 있으면 결제자 안내를 건너뛰던 규칙 때문에 8/22 단체 2건의
+  //  결제자가 아무 안내도 못 받았다. 같은 실수를 반복하지 않는다.)
+  for (var k = 0; k < matched.length; k++) {
+    var mp = matched[k].phone;
+    if (!mp) continue;
+    var ok = sendSms_(mp,
+      '[BNI Korea LT Training]\n' +
+      matched[k].name + '님, 신청하신 교육이 취소 처리되었습니다.\n\n' +
+      '· ' + matched[k].title + '\n\n' +
+      '환불금은 결제 수단에 따라 입금됩니다.\n' +
+      '· 신용카드 : 승인 취소 후 카드사 정책에 따라 1~2개월 소요\n' +
+      '· 계좌이체 : 환불 승인 후 5~7영업일 내 처리\n\n' +
+      '문의 : BNI코리아 내셔널 오피스 02-6261-8838');
+    // 발송 시각을 신청명단 '취소 안내 문자 발송' 열에 남긴다.
+    apps.getRange(matched[k].rowNumber, A_CANCEL_SMS + 1)
+        .setValue(ok === false ? stamp + ' 발송실패' : stamp);
+  }
 
   // 정산 담당자 통보
   notifySettlement_(
