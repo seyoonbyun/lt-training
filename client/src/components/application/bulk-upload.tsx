@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { REGIONS, chaptersOf, OTHER_CHAPTER } from "@/lib/regions";
-import { openTossPayment } from "@/lib/toss-payment";
+import { startPayment } from "@/lib/toss-payment";
 import { PaymentInterruptedDialog } from "./payment-interrupted";
 import { Check, Plus, Trash2, Users, Copy } from "lucide-react";
 import type { SecondaryProgram } from "@shared/schema";
@@ -156,7 +156,7 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
       });
 
       try {
-        await openTossPayment(order);
+        await startPayment(order);
       } catch (error: any) {
         // 토스트는 떴다 사라진다. 단체 신청은 명단을 다시 입력해야 해서 이탈 손실이 더 크다.
         setInterrupted({ token: order?.resumeToken, reason: error?.message });

@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { openTossPayment, type PreparedOrder } from "@/lib/toss-payment";
+import { startPayment, type PreparedOrder } from "@/lib/toss-payment";
 import { Check } from "lucide-react";
 import { REGIONS, chaptersOf, OTHER_CHAPTER } from "@/lib/regions";
 import type { TrainingProgram, SecondaryProgram } from "@shared/schema";
@@ -108,13 +108,15 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
       queryClient.invalidateQueries({ queryKey: ["/api/applications"] });
 
       toast({
-        title: "결제창을 엽니다",
-        description: "결제를 완료하셔야 신청이 확정됩니다.",
+        title: order.free ? "지원 대상으로 확인되었습니다" : "결제창을 엽니다",
+        description: order.free
+          ? "교육비 지원 대상이라 0원으로 신청이 확정됩니다."
+          : "결제를 완료하셔야 신청이 확정됩니다.",
       });
 
       try {
         // 결제창이 뜨면 토스 도메인으로 넘어가고, 끝나면 /payment/success 로 돌아온다.
-        await openTossPayment(order);
+        await startPayment(order);
       } catch (error: any) {
         // 사용자가 결제창을 닫은 경우도 여기로 온다.
         // 토스트는 떴다 사라져 아무것도 남기지 못한다 — 이어하기 버튼이 있는 화면을 띄운다.

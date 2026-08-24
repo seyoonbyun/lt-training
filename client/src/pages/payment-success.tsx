@@ -9,6 +9,10 @@ interface ConfirmResult {
   method?: string;
   approvedAt?: string;
   receiptUrl?: string;
+  /** 지원 대상이라 0원으로 확정된 신청 */
+  free?: boolean;
+  /** 지원 적용 전 정가 */
+  listAmount?: number;
 }
 
 export default function PaymentSuccess() {
@@ -21,18 +25,23 @@ export default function PaymentSuccess() {
     const paymentKey = params.get("paymentKey");
     const orderId = params.get("orderId");
     const amount = params.get("amount");
+    // 지원 대상 0원 신청은 토스를 거치지 않고 이 주소로 바로 온다 (결제창이 뜨지 않는다).
+    const isFree = params.get("free") === "1";
 
-    if (!paymentKey || !orderId || !amount) {
+    if (isFree ? !orderId : (!paymentKey || !orderId || !amount)) {
       setState("error");
       setErrorMessage("결제 정보가 올바르지 않습니다.");
       return;
     }
 
-    // 여기서 승인이 떨어져야 실제 결제가 완료된다. 리다이렉트만으로는 결제가 끝나지 않는다.
-    fetch("/api/payments/confirm", {
+    // 여기서 승인이 떨어져야 실제로 신청이 확정된다. 리다이렉트만으로는 끝나지 않는다.
+    // 0원이든 유료든 확정 지점은 이 화면 하나다.
+    fetch(isFree ? "/api/payments/confirm-free" : "/api/payments/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paymentKey, orderId, amount: Number(amount) }),
+      body: isFree
+        ? JSON.stringify({ orderId })
+        : JSON.stringify({ paymentKey, orderId, amount: Number(amount) }),
     })
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
@@ -64,7 +73,9 @@ export default function PaymentSuccess() {
             <CheckCircle2 className="w-12 h-12 mx-auto mb-4 text-red-600" />
             <h1 className="text-xl font-bold mb-2">신청이 완료되었습니다</h1>
             <p className="text-sm text-gray-600 mb-6">
-              결제가 정상 승인되어 신청이 확정되었습니다.
+              {result?.free
+                ? "교육비 지원 대상으로 확인되어 0원으로 신청이 확정되었습니다."
+                : "결제가 정상 승인되어 신청이 확정되었습니다."}
             </p>
 
             <dl className="text-sm text-left border-t border-gray-200 divide-y divide-gray-100">
@@ -77,7 +88,14 @@ export default function PaymentSuccess() {
               {typeof result?.amount === "number" && (
                 <div className="flex justify-between py-2.5">
                   <dt className="text-gray-500">결제 금액</dt>
-                  <dd className="font-medium">{result.amount.toLocaleString()}원</dd>
+                  <dd className="font-medium">
+                    {result.free && !!result.listAmount && (
+                      <span className="text-gray-400 line-through mr-2 font-normal">
+                        {result.listAmount.toLocaleString()}원
+                      </span>
+                    )}
+                    {result.amount.toLocaleString()}원
+                  </dd>
                 </div>
               )}
               {result?.method && (

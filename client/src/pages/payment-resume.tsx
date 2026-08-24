@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRoute } from "wouter";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { openTossPayment } from "@/lib/toss-payment";
+import { startPayment } from "@/lib/toss-payment";
 
 /**
  * 「결제 이어하기」 화면.
@@ -20,6 +20,10 @@ interface ResumeItem {
   title: string;
   participationType: string;
   price: number;
+  /** 지원 적용 전 정가 */
+  listPrice?: number;
+  /** 교육비 지원 대상이라 금액이 깎인 건 */
+  sponsored?: boolean;
 }
 
 interface ResumeSummary {
@@ -133,7 +137,7 @@ export default function PaymentResume() {
         setError(order?.message || "결제를 시작하지 못했습니다.");
         return;
       }
-      await openTossPayment(order);
+      await startPayment(order);
     } catch (e: any) {
       setError(e?.message || "결제창이 닫혔습니다. 다시 시도해 주세요.");
     } finally {
@@ -211,7 +215,14 @@ export default function PaymentResume() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-medium truncate">{item.name}</span>
-                          <span className="shrink-0 text-gray-700">{won(item.price)}원</span>
+                          <span className="shrink-0 text-gray-700">
+                            {item.sponsored && (
+                              <span className="text-gray-400 line-through mr-1.5">
+                                {won(item.listPrice ?? item.price)}원
+                              </span>
+                            )}
+                            {won(item.price)}원
+                          </span>
                         </div>
                         <div className="text-gray-500 truncate">{shortTitle(item.title)}</div>
 
@@ -284,10 +295,12 @@ export default function PaymentResume() {
             disabled={paying || chosen.length === 0}
           >
             {paying
-              ? "결제창을 여는 중..."
+              ? total === 0 ? "신청을 확정하는 중..." : "결제창을 여는 중..."
               : chosen.length === 0
                 ? "결제할 항목을 선택해 주세요"
-                : won(total) + "원 결제하기"}
+                : total === 0
+                  ? "0원으로 신청 확정하기"
+                  : won(total) + "원 결제하기"}
           </Button>
         )}
 

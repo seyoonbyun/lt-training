@@ -36,6 +36,14 @@ export interface PendingOrder {
   recipients?: Array<{ name: string; phone: string; email?: string; programTitle: string; trainingType: string }>;
   /** 일괄(대리) 신청의 결제자. 링크 전체를 요약해 한 통 더 보낸다. */
   payer?: { name: string; phone: string; email?: string };
+  /**
+   * 지원 대상이라 청구액이 0원인 주문.
+   * ⛔ 토스는 0원을 승인하지 못한다(카드 최소 100원). 결제창을 띄우지 않고
+   *    /api/payments/confirm-free 가 서버에서 바로 확정한다.
+   */
+  free?: boolean;
+  /** 지원을 적용하기 전 정가 합계. 화면·로그에만 쓴다. */
+  listAmount?: number;
   status: "pending" | "paid" | "failed";
   paymentKey?: string;
 }

@@ -15,6 +15,8 @@ import {
 import type { PendingOrder } from "./services/toss-payments";
 import { sendEnrollmentNotice } from "./services/enrollment-notify";
 import { createResumeToken, verifyResumeToken } from "./services/resume-token";
+import { applySponsorToItems, normalizePhone } from "./services/sponsor-list";
+import { idx } from "./services/sheet-schema";
 
 /**
  * 결제 승인 뒤 참여 안내를 문자·이메일로 함께 보낸다.
@@ -31,6 +33,43 @@ async function sendEnrollmentSms(order: PendingOrder) {
     kind: "confirm",
     context: `(주문 ${order.orderId})`,
   });
+}
+
+/** 0원(지원) 주문의 결제수단 표기. 시트 `결제수단` 열에 이 값이 남는다. */
+const FREE_METHOD = "지원(0원)";
+
+/**
+ * 승인된 주문을 신청명단에 기록한다 (J열 `완료` + 주문번호·결제키·결제수단·승인일시).
+ *
+ * ⛔ 유료 결제와 0원 지원이 **같은 함수를 쓴다.** 갈래를 나누면 한쪽만 고쳐지고,
+ *    그 결과가 "취소했는데 대시보드는 그대로" 같은 조용한 어긋남으로 돌아온다.
+ * ⛔ 승인은 이미 끝났으므로 시트 기록이 실패해도 위로 던지지 않는다. 로그만 남긴다.
+ */
+async function markOrderRowsPaid(
+  order: PendingOrder,
+  info: { paymentKey: string; method?: string; approvedAt?: string }
+) {
+  const rowsToMark = order.sheetRows?.length ? order.sheetRows : [order.sheetRow || 0];
+  for (let i = 0; i < rowsToMark.length; i++) {
+    const row = rowsToMark[i];
+    if (!row || row <= 1) continue;   // 신청 행이 못 만들어진 건 — 결제는 유효하다
+    // 다과목 개별 신청은 행마다 금액이 다를 수 있어 rowAmounts 를 먼저 본다.
+    const rowAmount = order.rowAmounts?.[i]
+      ?? (order.quantity ? order.amount / order.quantity : order.amount);
+    try {
+      await googleSheetsService.markApplicationPaid(row, {
+        orderId: order.orderId,
+        paymentKey: info.paymentKey,
+        method: info.method,
+        approvedAt: info.approvedAt,
+        amount: rowAmount,
+        // 「결제 이어하기」는 행이 이미 있어 신청 때 결제자를 못 썼다. 여기서 채운다.
+        payer: order.payer || { name: order.name, phone: order.phone, email: order.email },
+      });
+    } catch (sheetError) {
+      console.error(`⚠ 결제는 승인됐으나 시트 기록에 실패했습니다: ${order.orderId} (행 ${row})`, sheetError);
+    }
+  }
 }
 
 /**
@@ -314,12 +353,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 한 요청 안에서 같은 행을 두 번 쓰지 않는다 (명단에 같은 줄이 두 번 있는 경우).
       const usedRows = new Set<number>();
 
+      // 지원 대상 명단(신청명단 `지원 대상` 탭)에 있으면 그 금액만큼 깎는다.
+      // 전액 지원이면 합계가 0원이 되고, 그때는 결제창을 띄우지 않는다(토스는 0원을 못 받는다).
+      const sponsored = await applySponsorToItems(
+        pending.map((item) => ({
+          phone: item.data.phone,
+          name: item.data.name,
+          region: item.data.region || "",
+          chapter: item.data.chapter || "",
+          programTitle: item.data.programTitle,
+          price: item.program.price,
+        }))
+      );
+
       // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)은 비어 있어 아직 집계되지 않는다.
       const sheetRows: number[] = [];
       const rowAmounts: number[] = [];
       const recorded: any[] = [];
 
-      for (const item of pending) {
+      for (let i = 0; i < pending.length; i++) {
+        const item = pending[i];
         const key = googleSheetsService.buildReuseKey({
           programTitle: item.data.programTitle,
           region: item.data.region || "",
@@ -337,7 +390,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         //   막는 것이 훨씬 나쁘다. 행 번호만 0 으로 두고 결제 기록 단계에서 건너뛴다.
         //   기록 실패는 googleSheetsService 가 관리자에게 문자로 알린다.
         sheetRows.push(typeof sheetRow === "number" && sheetRow > 1 ? sheetRow : 0);
-        rowAmounts.push(item.program.price);
+        rowAmounts.push(sponsored[i].price);
         recorded.push(item.program);
       }
 
@@ -347,6 +400,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const amount = rowAmounts.reduce((sum, price) => sum + price, 0);
+      const listAmount = sponsored.reduce((sum, s) => sum + s.listPrice, 0);
+      // 0원이면 토스를 태우지 않고 서버가 자체 승인한다 (/api/payments/confirm-free).
+      const free = amount === 0;
       const orderName = recorded.length === 1
         ? recorded[0].title
         : `${recorded[0].title} 외 ${recorded.length - 1}과목`;
@@ -365,6 +421,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sheetRow: sheetRows[0],
         sheetRows,
         rowAmounts,
+        free,
+        listAmount,
         // 승인 뒤 참여 링크 문자를 보낼 대상. 개별 신청은 신청자 본인이 과목 수만큼 들어간다.
         recipients: recorded.map((p: any, i: number) => ({
           name: applicant.name,
@@ -381,12 +439,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json({
         orderId,
         amount,
+        free,
+        listAmount,
         orderName,
         clientKey: getClientKey(),
         customerName: applicant.name,
         customerEmail: applicant.email,
         customerMobilePhone: String(applicant.phone || "").replace(/[^0-9]/g, ""),
-        sessions: recorded.map((p: any) => ({ title: p.title, price: p.price })),
+        sessions: recorded.map((p: any, i: number) => ({
+          title: p.title,
+          price: sponsored[i].price,
+          listPrice: sponsored[i].listPrice,
+          sponsored: sponsored[i].discount > 0,
+        })),
         skippedDuplicates: duplicateTitles,
         resumeToken: resumeTokenFor(sheetRows.filter((r) => r > 1)),
       });
@@ -533,6 +598,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: String(payer.email || "").trim(),
       });
 
+      // ⛔ 일괄(대리) 신청에는 교육비 지원을 적용하지 않는다 — 지원은 개별 신청 한정이다.
+      //    대신 결제하는 분이 따로 있어 "누구에게 준 지원인가" 가 흐려지고,
+      //    수강자 연락처가 선택 입력이라 애초에 판정할 수 없는 줄이 섞인다.
+
       // 행 번호와 금액을 같은 순서로 모은다. 과목마다 단가가 달라도 행별로 정확히 기록된다.
       const sheetRows: number[] = [];
       const rowAmounts: number[] = [];
@@ -638,7 +707,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const rowMap = await googleSheetsService.getApplicationRowsByNumbers(payload.rows);
     const programs = await googleSheetsService.getSecondarySheetPrograms();
 
-    const items: Array<{ row: number; title: string; name: string; phone: string; email: string; participationType: string; price: number }> = [];
+    const items: Array<{ row: number; title: string; name: string; phone: string; email: string; region: string; chapter: string; participationType: string; price: number; listPrice?: number }> = [];
     const alreadyPaid: string[] = [];
     const closed: string[] = [];
 
@@ -673,10 +742,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         name: String(row[4] || "").trim(),
         phone: String(row[5] || "").trim(),
         email: String(row[6] || "").trim(),
+        // 지원 판정에 지역·챕터가 필요하다. 열 위치는 스키마에서 가져온다.
+        region: String(row[idx("지역")] || "").trim(),
+        chapter: String(row[idx("챕터")] || "").trim(),
         participationType: String(row[7] || "").trim(),
         price: program.price,
       });
     }
+
+    // 지원 대상은 여기서 깎는다. 화면에 보이는 금액과 실제 청구가 한 곳에서 나온다 —
+    // 따로 계산하면 화면은 0원인데 청구는 정가인 사고가 난다.
+    //
+    // ⛔ 지원은 **개별 신청 한정**이다. 이어하기 링크에는 개별 행과 일괄(대리) 행이 섞여
+    //    들어오므로 행마다 가른다 — 개별 신청은 결제자가 신청자 본인이라 두 연락처가 같고,
+    //    일괄은 대신 내는 분이 따로 있어 다르다. 결제자 연락처가 아직 비어 있는 옛 행은
+    //    본인 결제로 본다(개별 신청이 그 열을 채우기 전에 만들어진 행).
+    const selfPaid = items.map((i) => {
+      const payerPhone = normalizePhone(String(rowMap.get(i.row)?.[idx("결제자 연락처")] || ""));
+      return !payerPhone || payerPhone === normalizePhone(i.phone);
+    });
+    const sponsored = await applySponsorToItems(
+      items.map((i, n) => ({
+        phone: selfPaid[n] ? i.phone : "",   // 대리 결제 건은 판정 자체를 하지 않는다
+        name: i.name,
+        region: i.region,
+        chapter: i.chapter,
+        programTitle: i.title,
+        price: i.price,
+      }))
+    );
+    items.forEach((item, i) => {
+      item.listPrice = sponsored[i].listPrice;
+      item.price = sponsored[i].price;
+    });
 
     return { payload, payer, items, alreadyPaid, closed };
   }
@@ -696,7 +794,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         items: items.map((i: any) => ({
           row: i.row, name: i.name, title: i.title,
           participationType: i.participationType, price: i.price,
+          listPrice: i.listPrice ?? i.price,
+          sponsored: (i.listPrice ?? i.price) > i.price,
         })),
+        listAmount: items.reduce((sum: number, i: any) => sum + (i.listPrice ?? i.price), 0),
         alreadyPaid,
         closed,
         expiresAt: payload.exp,
@@ -740,6 +841,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const amount = items.reduce((sum: number, i: any) => sum + i.price, 0);
+      const listAmount = items.reduce((sum: number, i: any) => sum + (i.listPrice ?? i.price), 0);
+      const free = amount === 0;
       const distinctTitles = Array.from(new Set(items.map((i: any) => i.title))) as string[];
       const orderName = distinctTitles.length === 1
         ? `${distinctTitles[0]} ${items.length}건`
@@ -759,6 +862,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sheetRows: items.map((i: any) => i.row),
         rowAmounts: items.map((i: any) => i.price),
         quantity: items.length,
+        free,
+        listAmount,
         recipients: items.map((i: any) => ({
           name: i.name,
           phone: i.phone,
@@ -775,6 +880,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json({
         orderId,
         amount,
+        free,
+        listAmount,
         quantity: items.length,
         orderName,
         clientKey: getClientKey(),
@@ -844,6 +951,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "결제 금액이 일치하지 않습니다." });
       }
 
+      // ⛔ 0원 주문은 여기로 올 수 없다. 토스가 승인해 줄 수 없는 금액이라
+      //    paymentKey 가 존재할 수 없고, 온다면 위조다.
+      if (order.free || order.amount === 0) {
+        console.error("❌ 0원 주문이 유료 승인으로 들어왔습니다:", orderId);
+        return res.status(400).json({ message: "결제 정보가 올바르지 않습니다." });
+      }
+
       if (order.status === "paid") {
         return res.json({ ok: true, alreadyConfirmed: true, orderName: order.orderName });
       }
@@ -865,27 +979,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 승인은 끝났으므로 시트 기록이 실패해도 결제 자체는 유효하다.
       // 사용자에게 실패로 보이지 않게 하되, 로그로 남겨 수기 보정이 가능하게 한다.
       // 일괄 결제는 한 주문이 여러 행을 덮는다. 한 행이 실패해도 나머지는 계속 찍는다.
-      const rowsToMark = order.sheetRows?.length ? order.sheetRows : [order.sheetRow || 0];
-      for (let i = 0; i < rowsToMark.length; i++) {
-        const row = rowsToMark[i];
-        if (!row || row <= 1) continue;   // 신청 행이 못 만들어진 건 — 결제는 유효하다
-        // 다과목 개별 신청은 행마다 금액이 다를 수 있어 rowAmounts 를 먼저 본다.
-        const rowAmount = order.rowAmounts?.[i]
-          ?? (order.quantity ? order.amount / order.quantity : order.amount);
-        try {
-          await googleSheetsService.markApplicationPaid(row, {
-            orderId: order.orderId,
-            paymentKey: String(paymentKey),
-            method: result.method,
-            approvedAt: result.approvedAt,
-            amount: rowAmount,
-            // 「결제 이어하기」는 행이 이미 있어 신청 때 결제자를 못 썼다. 여기서 채운다.
-            payer: order.payer || { name: order.name, phone: order.phone, email: order.email },
-          });
-        } catch (sheetError) {
-          console.error(`⚠ 결제는 승인됐으나 시트 기록에 실패했습니다: ${order.orderId} (행 ${row})`, sheetError);
-        }
-      }
+      await markOrderRowsPaid(order, {
+        paymentKey: String(paymentKey),
+        method: result.method,
+        approvedAt: result.approvedAt,
+      });
 
       // 참여 링크 문자. 실패해도 결제는 유효하므로 응답을 막지 않는다.
       const smsResult = await sendEnrollmentSms(order);
@@ -903,6 +1001,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("결제 승인 처리 실패:", error);
       res.status(500).json({ message: "결제 승인 처리 중 오류가 발생했습니다." });
+    }
+  });
+
+  /**
+   * 지원 대상 0원 확정.
+   *
+   * 토스는 0원을 승인하지 못한다(카드 최소 결제 금액 100원). 그래서 결제창을 띄우지 않고
+   * 여기서 바로 확정한다. 승인 뒤 흐름은 유료 결제와 **같은 함수**를 탄다 —
+   * J열 `완료` · 주문번호 · 결제완료 문자·이메일 · 리마인드 · 취소접수가 전부 그대로 산다.
+   *
+   * ⛔ 금액을 클라이언트에서 받지 않는다. 주문번호만 받고, 금액이 0원인지는 서버가 판단한다.
+   *    지원 여부는 /api/payments/prepare 가 시트를 읽어 이미 결정해 뒀다.
+   */
+  app.post("/api/payments/confirm-free", async (req, res) => {
+    try {
+      const orderId = String(req.body?.orderId || "").trim();
+      if (!orderId) {
+        return res.status(400).json({ message: "주문 정보가 올바르지 않습니다." });
+      }
+
+      const order = getOrder(orderId);
+      if (!order) {
+        console.error("❌ 알 수 없는 주문(0원):", orderId);
+        return res.status(404).json({
+          message: "주문 정보를 찾을 수 없습니다. 신청 화면에서 다시 시도해 주세요.",
+        });
+      }
+
+      // ⛔ 지원 대상이 아니면 여기서 확정하지 않는다. 결제를 건너뛰는 유일한 문이다.
+      if (!order.free || order.amount !== 0) {
+        console.error(`❌ 0원이 아닌 주문을 무료 확정하려 했습니다: ${orderId} (${order.amount}원)`);
+        return res.status(400).json({ message: "결제가 필요한 신청입니다. 결제 화면에서 진행해 주세요." });
+      }
+
+      if (order.status === "paid") {
+        return res.json({
+          ok: true, alreadyConfirmed: true, free: true,
+          orderId: order.orderId, orderName: order.orderName, amount: 0,
+        });
+      }
+
+      order.status = "paid";
+      const approvedAt = new Date().toISOString();
+
+      console.log(`🎁 지원 0원 확정: ${orderId} / ${order.orderName} / 정가 ${(order.listAmount || 0).toLocaleString()}원`);
+
+      await markOrderRowsPaid(order, { paymentKey: "", method: FREE_METHOD, approvedAt });
+
+      // 참여 링크 문자·이메일. 실패해도 신청은 유효하므로 응답을 막지 않는다.
+      const smsResult = await sendEnrollmentSms(order);
+
+      res.json({
+        ok: true,
+        free: true,
+        orderId: order.orderId,
+        orderName: order.orderName,
+        amount: 0,
+        listAmount: order.listAmount || 0,
+        method: FREE_METHOD,
+        approvedAt,
+        sms: smsResult,
+      });
+    } catch (error) {
+      console.error("지원 0원 확정 실패:", error);
+      res.status(500).json({ message: "신청 확정 중 오류가 발생했습니다. 내셔널 오피스로 문의해 주세요." });
     }
   });
 
