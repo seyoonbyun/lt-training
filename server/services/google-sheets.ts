@@ -28,6 +28,26 @@ const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID || "";
  */
 export const EXPIRED_MARK = '결제거부';
 
+/**
+ * 과목 목록의 **정본은 세션등록 시트**다. 이건 시트를 못 읽었을 때만 쓰는 비상 목록이다.
+ *
+ * ⛔ 여기에 과목을 손으로 더하지 말 것. 2026-08-24 에 이 9개 목록이 대시보드 집계의
+ *    마지막 단계에 하드코딩돼 있어서, 목록에 없던 `LTT : 의장 T.` 신청 11건이
+ *    **화면에서 통째로 사라졌다**(합계는 138인데 과목별 합은 127이었다).
+ *    과목이 늘 때마다 코드를 고쳐야 하는 구조가 원인이었다.
+ */
+export const FALLBACK_COURSE_TITLES = [
+  'LTT : 파운데이션 T.',
+  'LTT : 멤버십 위원회 T.',
+  'LTT : PR 코디네이터T.',
+  'LTT : 교육 코디네이터 T.',
+  'LTT : 성장 코디네이터 T.',
+  'LTT : ST T.',
+  'LTT : 비지터 호스트 T.',
+  'LTT : 이벤트 코디네이터 T.',
+  'LTT : 멘토링 코디네이터 T.',
+];
+
 // 모듈 레벨 액세스 토큰 캐시 (스코프별로 구분)
 const _cachedTokens: Map<string, { token: string; expiresAt: number }> = new Map();
 
@@ -1427,23 +1447,25 @@ export class GoogleSheetsService {
       const chapterStats: { [chapter: string]: { total: number; paid: number; pending: number } } = {};
       const recentApplications: any[] = [];
 
+      // ── 정식 과목 목록. **세션등록 시트가 정본**이다.
+      //    코드에 목록을 박아 두면 과목이 늘 때마다 화면에서 조용히 빠진다
+      //    (2026-08-24 `LTT : 의장 T.` 신청 11건이 통째로 사라진 사고).
+      let formalNames: string[] = [];
+      try {
+        const allPrograms = await this.getSecondarySheetPrograms();
+        formalNames = allPrograms.map((p: any) => String(p.title || '').trim()).filter(Boolean);
+      } catch (error) {
+        console.error('대시보드: 과목 목록을 읽지 못했습니다 (기본 목록으로 진행):', error);
+      }
+      if (formalNames.length === 0) formalNames = [...FALLBACK_COURSE_TITLES];
+
       // 과목명 별칭을 정식 과목명으로 매핑하는 함수
       const normalizeCourseName = (courseName: string): string => {
         if (!courseName) return courseName;
-        
-        // 이미 정식 과목명이면 그대로 반환
-        const formalNames = [
-          'LTT : 파운데이션 T.',
-          'LTT : 멤버십 위원회 T.',
-          'LTT : PR 코디네이터T.',
-          'LTT : 교육 코디네이터 T.',
-          'LTT : 성장 코디네이터 T.',
-          'LTT : ST T.',
-          'LTT : 비지터 호스트 T.',
-          'LTT : 이벤트 코디네이터 T.',
-          'LTT : 멘토링 코디네이터 T.'
-        ];
-        
+
+        // 이미 정식 과목명이면 그대로 반환.
+        // ⭐ 이 조기 반환이 아래 패턴 규칙보다 먼저 와야 한다 — 안 그러면 새 과목이
+        //    엉뚱한 규칙에 걸려 다른 과목으로 합쳐진다.
         if (formalNames.includes(courseName)) {
           return courseName;
         }
@@ -1540,30 +1562,10 @@ export class GoogleSheetsService {
         return courseNameMap[courseName] || courseName;
       };
 
-      // 먼저 모든 정식 과목 목록을 가져와서 0명으로 초기화
-      try {
-        const allPrograms = await this.getSecondarySheetPrograms();
-        allPrograms.forEach(program => {
-          programStats[program.title] = { total: 0, paid: 0, pending: 0 };
-        });
-      } catch (error) {
-        console.error("Failed to fetch all programs for dashboard:", error);
-        // 실패 시 기본 과목 목록으로 초기화
-        const defaultPrograms = [
-          'LTT : 파운데이션 T.',
-          'LTT : 멤버십 위원회 T.',
-          'LTT : PR 코디네이터T.',
-          'LTT : 교육 코디네이터 T.',
-          'LTT : 성장 코디네이터 T.',
-          'LTT : ST T.',
-          'LTT : 비지터 호스트 T.',
-          'LTT : 이벤트 코디네이터 T.',
-          'LTT : 멘토링 코디네이터 T.'
-        ];
-        defaultPrograms.forEach(program => {
-          programStats[program] = { total: 0, paid: 0, pending: 0 };
-        });
-      }
+      // 신청이 아직 없는 과목도 0명으로 보이게 미리 깔아 둔다.
+      formalNames.forEach(title => {
+        programStats[title] = { total: 0, paid: 0, pending: 0 };
+      });
 
       dataRows.forEach((row: string[], index: number) => {
         // 취소된 신청은 집계·최근 신청 어디에도 넣지 않는다.
@@ -1645,36 +1647,30 @@ export class GoogleSheetsService {
 
       // 프로그램별 통계에서 별칭들을 정식 과목명으로 통합
       const consolidatedProgramStats: { [program: string]: { total: number; paid: number; pending: number } } = {};
-      
-      // 먼저 모든 정식 과목명으로 초기화
-      const formalCourseNames = [
-        'LTT : 파운데이션 T.',
-        'LTT : 멤버십 위원회 T.',
-        'LTT : PR 코디네이터T.',
-        'LTT : 교육 코디네이터 T.',
-        'LTT : 성장 코디네이터 T.',
-        'LTT : ST T.',
-        'LTT : 비지터 호스트 T.',
-        'LTT : 이벤트 코디네이터 T.',
-        'LTT : 멘토링 코디네이터 T.'
-      ];
-      
-      formalCourseNames.forEach(courseName => {
+
+      // 시트에 있는 과목은 신청이 없어도 0명으로 자리를 잡아 둔다
+      formalNames.forEach(courseName => {
         consolidatedProgramStats[courseName] = { total: 0, paid: 0, pending: 0 };
       });
-      
-      // programStats의 모든 항목을 정식 과목명으로 매핑해서 합산
+
+      // ⛔ 모르는 과목명이라고 **버리지 않는다.** 예전엔 하드코딩된 9개 목록에 없으면
+      //    조용히 사라졌고, 그래서 합계(138)와 과목별 합(127)이 어긋난 채 화면에 떠 있었다.
+      //    이상한 이름이 뜨는 건 눈에 보이지만, 없어진 11명은 아무도 못 본다.
       Object.entries(programStats).forEach(([courseName, stats]) => {
         const normalizedName = normalizeCourseName(courseName);
-        if (consolidatedProgramStats[normalizedName]) {
-          consolidatedProgramStats[normalizedName].total += stats.total;
-          consolidatedProgramStats[normalizedName].paid += stats.paid;
-          consolidatedProgramStats[normalizedName].pending += stats.pending;
-        } else if (formalCourseNames.includes(normalizedName)) {
-          // 정식 과목명인 경우 직접 추가
-          consolidatedProgramStats[normalizedName] = { ...stats };
+        if (!consolidatedProgramStats[normalizedName]) {
+          consolidatedProgramStats[normalizedName] = { total: 0, paid: 0, pending: 0 };
         }
+        consolidatedProgramStats[normalizedName].total += stats.total;
+        consolidatedProgramStats[normalizedName].paid += stats.paid;
+        consolidatedProgramStats[normalizedName].pending += stats.pending;
       });
+
+      // 집계가 새면 로그로 남긴다. 조용히 어긋나는 것이 가장 나쁘다.
+      const programSum = Object.values(consolidatedProgramStats).reduce((n, v) => n + v.total, 0);
+      if (programSum !== totalApplications) {
+        console.error(`⚠ 대시보드 과목별 합(${programSum}) 이 전체 신청(${totalApplications}) 과 다릅니다.`);
+      }
 
       return {
         totalApplications,
