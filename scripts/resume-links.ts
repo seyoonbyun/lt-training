@@ -21,6 +21,7 @@
  */
 import { createResumeToken, encodeRows } from "../server/services/resume-token";
 import { getServiceAccountAccessToken } from "../server/services/google-sheets";
+import { parseStamp } from "../shared/stamp";
 
 const BASE = process.argv[2] || "https://ltt-bnikorea.com";
 const SHEET = process.env.GOOGLE_SPREADSHEET_ID || "";
@@ -49,18 +50,6 @@ async function main() {
   if (!res.ok) throw new Error(`시트 읽기 실패: ${res.status}`);
 
   const rows = ((await res.json()) as { values?: string[][] }).values || [];
-
-  /** "2026. 08. 22. PM 05:58:17" -> epoch ms. 못 읽으면 NaN 을 돌려 묶음을 끊는다. */
-  const parseStamp = (v: string): number => {
-    const m = String(v || "").match(/(\d{4})\.\s*(\d{2})\.\s*(\d{2})\.\s*(AM|PM)\s*(\d{2}):(\d{2}):(\d{2})/);
-    if (!m) return NaN;
-    let hour = parseInt(m[5], 10);
-    if (m[4] === "PM" && hour !== 12) hour += 12;
-    if (m[4] === "AM" && hour === 12) hour = 0;
-    return new Date(
-      `${m[1]}-${m[2]}-${m[3]}T${String(hour).padStart(2, "0")}:${m[6]}:${m[7]}+09:00`
-    ).getTime();
-  };
 
   const groups: Group[] = [];
   let current: Group | null = null;

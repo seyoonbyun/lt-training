@@ -12,6 +12,7 @@ import { googleSheetsService } from "./google-sheets";
 import { isSolapiConfigured, sendMessages } from "./solapi";
 import { isMailerConfigured, sendMails } from "./mailer";
 import { cell } from "./sheet-schema";
+import { sendStamp } from "../../shared/stamp";
 import { buildAttendeeMessages, buildPayerMessage } from "./enrollment-sms";
 import { buildAttendeeMails, buildPayerMail, type NoticeKind } from "./enrollment-email";
 import type { ProgramInfo, SmsRecipient } from "./enrollment-notice";
@@ -112,7 +113,7 @@ export async function sendEnrollmentNotice(target: NotifyTarget, programMap?: Ma
 
 /** 결제완료 안내의 발송 결과를 신청명단에 적는다. 실패해도 결제 흐름을 막지 않는다. */
 async function recordSendResult(recipients: SmsRecipient[], context: string) {
-  const stamp = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+  const stamp = sendStamp();
   const SHEET_NAME = "2026 LTT 신청명단";
   const cells: Array<{ range: string; values: string[][] }> = [];
 

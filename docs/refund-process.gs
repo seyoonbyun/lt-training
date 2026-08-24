@@ -270,9 +270,9 @@ function processRefund_(row) {
   }
 
   // 취소 표시
-  var stamp = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm:ss');
+  var stamp = ltStamp_();
   for (var m = 0; m < matched.length; m++) {
-    apps.getRange(matched[m].rowNumber, A_CANCEL + 1).setValue(stamp);
+    apps.getRange(matched[m].rowNumber, A_CANCEL + 1).setNumberFormat('@').setValue(stamp);
     // 결제완료(J) 열도 같이 바꾼다 — S열만 보면 명단을 눈으로 훑을 때 취소 건이 '완료' 로 보인다.
     // 집계는 전부 S열로 판정하므로(신청 현황 탭 수식 · 서버) 이 값을 바꿔도 숫자는 달라지지 않는다.
     // 결제 사실 자체는 주문번호·결제키·승인일시(L~O)에 그대로 남는다.
@@ -309,7 +309,7 @@ function processRefund_(row) {
       '문의 : BNI코리아 내셔널 오피스 02-6261-8838');
     // 발송 시각을 신청명단 '취소 안내 문자 발송' 열에 남긴다.
     apps.getRange(matched[k].rowNumber, A_CANCEL_SMS + 1)
-        .setValue(ok === false ? stamp + ' 발송실패' : stamp);
+        .setNumberFormat('@').setValue(ok === false ? stamp + ' 발송실패' : stamp);
   }
 
   // 정산 담당자 통보
@@ -417,4 +417,31 @@ function byteLen_(text) {
   var n = 0;
   for (var i = 0; i < text.length; i++) n += text.charCodeAt(i) > 127 ? 2 : 1;
   return n;
+}
+
+
+/**
+ * 발송·처리 시각 표기. 서버의 shared/stamp.ts sendStamp() 와 **같은 서식**이다.
+ *
+ *   2026. 8. 24. PM 12:47:05   (KST)
+ *
+ * ⛔ Utilities.formatDate 의 'a'(AM/PM) 는 실행 로케일을 탄다 — 한국어 로케일이면
+ *   '오전/오후' 가 나와 서버가 쓴 값과 갈린다. 그래서 조각을 따로 뽑아 조립한다.
+ * ⛔ 값을 쓰기 전에 셀 서식을 '@'(텍스트) 로 못박는다. 그냥 setValue 하면 시트가
+ *   날짜값으로 삼켜 제 마음대로 다시 그린다(예전 '09:27:14' 가 '9:27:14' 로 보이던 이유).
+ * ⚠ 이 함수를 고치면 shared/stamp.ts 도 같이 고친다. 두 곳이 갈리면 원점이다.
+ */
+function ltStamp_(when) {
+  var d = when || new Date();
+  var TZ = 'Asia/Seoul';
+  var h24 = parseInt(Utilities.formatDate(d, TZ, 'H'), 10);
+  var h = h24 % 12;
+  if (h === 0) h = 12;
+  return Utilities.formatDate(d, TZ, 'yyyy') + '. ' +
+         Utilities.formatDate(d, TZ, 'M') + '. ' +
+         Utilities.formatDate(d, TZ, 'd') + '. ' +
+         (h24 < 12 ? 'AM' : 'PM') + ' ' +
+         h + ':' +
+         Utilities.formatDate(d, TZ, 'mm') + ':' +
+         Utilities.formatDate(d, TZ, 'ss');
 }

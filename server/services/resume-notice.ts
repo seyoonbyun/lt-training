@@ -11,6 +11,7 @@
 import { get as getCol, cell, sheetRange } from "./sheet-schema";
 import { googleSheetsService, EXPIRED_MARK } from "./google-sheets";
 import { createResumeToken } from "./resume-token";
+import { sendStamp, parseStamp } from "../../shared/stamp";
 
 const SITE = process.env.PUBLIC_SITE_URL || "https://ltt-bnikorea.com";
 
@@ -315,23 +316,10 @@ export function buildAdminCopies(
  * ⛔ 예전에는 "문자발송완" 이라는 글자만 적었다. 값이 있으면 다시 안 보낸다는 목적에는
  *   맞았지만, **언제 보냈는지를 모르니 "n시간 뒤"를 계산할 수 없었다.**
  *   2차 안내(12시간 뒤)·결제거부 표기(다시 12시간 뒤)가 이 시각을 읽는다.
+ *
+ * 서식은 shared/stamp 한 곳에만 있다. 여기서 다시 만들지 않는다.
  */
-export function sendStamp(now = new Date()): string {
-  const p = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Seoul",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  }).format(now);
-  return p.replace("T", " ");
-}
-
-/** sendStamp 가 적은 "YYYY-MM-DD HH:mm:ss"(KST) 를 epoch ms 로. 못 읽으면 NaN. */
-export function parseStamp(v: string): number {
-  const m = String(v || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
-  if (!m) return NaN;
-  const [, y, mo, d, h, mi, sec] = m;
-  return Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${sec}+09:00`);
-}
+export { sendStamp, parseStamp } from "../../shared/stamp";
 
 /** (구) 값. 시각 없이 이 글자만 있는 행이 남아 있다 - 그 묶음은 시각을 알 수 없다. */
 export const NUDGE_MARK = "문자발송완";

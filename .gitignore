@@ -46,4 +46,5 @@ recover-backup-*.json
 restructure-backup*.json
 movecol-backup-*.json
 addcol-backup-*.json
+stamp-normalize-backup-*.json
 scripts/_*.ts

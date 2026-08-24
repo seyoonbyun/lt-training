@@ -1382,7 +1382,8 @@ export class GoogleSheetsService {
     }
 
     try {
-      // ⛔ A:J 까지만 읽으면 X열(취소)을 못 본다 — 취소한 신청이 대시보드에 계속 잡힌다.
+      // ⛔ A:J 까지만 읽으면 '취소' 열을 못 본다 — 취소한 신청이 대시보드에 계속 잡힌다.
+      //   (열 위치는 sheet-schema.ts 가 정본이다. 여기에 열 문자를 적지 않는다.)
       const url = `${this.baseUrl}/${this.spreadsheetId}/values/${encodeURIComponent(sheetRange(APPLICATIONS_TAB))}?key=${this.apiKey}`;
       const response = await fetch(url);
 

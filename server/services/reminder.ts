@@ -22,6 +22,7 @@ import type { ColumnName } from "./sheet-schema";
 import { googleSheetsService } from "./google-sheets";
 import { loadProgramMap, sendEnrollmentNotice } from "./enrollment-notify";
 import type { SmsRecipient } from "./enrollment-notice";
+import { sendStamp } from "../../shared/stamp";
 
 const SHEET_NAME = "2026 LTT 신청명단";
 
@@ -141,7 +142,7 @@ export async function runReminder(
   );
 
   // 발송을 시도한 행은 전부 표시한다. 일부 실패했다고 전원에게 다시 보내면 중복이 더 나쁘다.
-  const stamp = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+  const stamp = sendStamp();
   try {
     await googleSheetsService.writeApplicationCells(
       rows.map((r) => ({ range: cell(SHEET_NAME, r.row, cfg.column), values: [[stamp]] }))
