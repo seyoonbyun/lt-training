@@ -30,6 +30,12 @@ export interface PendingOrder {
   /** sheetRows 와 같은 순서의 행별 금액. 과목마다 단가가 달라도 정확히 기록된다 */
   rowAmounts?: number[];
   /**
+   * sheetRows 와 같은 순서의 I열(`특이사항 & 문의`) 표기.
+   * 「결제 이어하기」로 들어온 지원 건만 값이 있다 — 새 신청은 행을 만들 때 이미 붙였다.
+   * 값이 없는 자리는 그 행의 I열을 건드리지 않는다.
+   */
+  rowNotes?: (string | undefined)[];
+  /**
    * 결제 승인 뒤 참여 링크 문자를 보낼 대상. sheetRows 와 같은 순서.
    * 개별 신청이면 신청자 본인이 과목 수만큼, 일괄 신청이면 수강자 명단이 들어온다.
    */

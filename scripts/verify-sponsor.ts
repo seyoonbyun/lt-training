@@ -5,6 +5,7 @@
  *   npx tsx scripts/verify-sponsor.ts
  */
 import "dotenv/config";
+import { googleSheetsService } from "../server/services/google-sheets";
 import {
   SPONSOR_COLUMNS,
   SPONSOR_TAB,
@@ -39,8 +40,14 @@ async function main() {
   check("빈 값", normalizePhone(""), "");
 
   console.log("\n[2] 과목명 정규화 — 'LTT : ' 를 빼고 적어도 맞아야 한다");
-  check("LTT : 파운데이션 T.", normalizeTitle("LTT : 파운데이션 T."), "파운데이션t.");
-  check("파운데이션 T.", normalizeTitle("파운데이션 T."), "파운데이션t.");
+  const T = "LTT : 파운데이션 T.";
+  check("LTT : 파운데이션 T.", normalizeTitle(T), "파운데이션");
+  check("파운데이션 T. 로 적어도 같다", normalizeTitle("파운데이션 T."), normalizeTitle(T));
+  check("파운데이션 만 적어도 같다", normalizeTitle("파운데이션"), normalizeTitle(T));
+  check("PR 코디네이터T. (붙은 T.)", normalizeTitle("LTT : PR 코디네이터T."), "pr코디네이터");
+  check("ST 는 T 가 안 잘린다", normalizeTitle("ST"), "st");
+  check("ST 와 ST T. 는 같다", normalizeTitle("ST"), normalizeTitle("LTT : ST T."));
+  check("비지터 호스트도 안 깎인다", normalizeTitle("비지터호스트"), normalizeTitle("LTT : 비지터 호스트 T."));
 
   console.log("\n[2-2] 지역·챕터 정규화");
   check("서 울 = 서울", normalizeLabel("서 울"), normalizeLabel("서울"));
@@ -74,11 +81,11 @@ async function main() {
   const q = (phone: string, region: string, chapter: string, title = "LTT : 파운데이션 T.") =>
     ({ phone, region, chapter, programTitle: title });
 
-  console.log("\n[5] 판정 — 지역·챕터까지 맞아야 한다");
+  console.log("\n[5] 판정 — 연락처 하나로 가른다 (지역·챕터는 거부권이 없다)");
   check("지역·챕터·연락처 전부 일치", !!findSponsor(parsed, q("010-1234-5678", "서울", "강남")), true);
-  check("지역이 다르면 탈락", !!findSponsor(parsed, q("010-1234-5678", "부산", "강남")), false);
-  check("챕터가 다르면 탈락", !!findSponsor(parsed, q("010-1234-5678", "서울", "역삼")), false);
-  check("신청서에 지역·챕터가 없으면 탈락", !!findSponsor(parsed, q("010-1234-5678", "", "")), false);
+  check("지역이 달라도 지원은 붙는다", !!findSponsor(parsed, q("010-1234-5678", "부산", "강남")), true);
+  check("챕터가 달라도 지원은 붙는다", !!findSponsor(parsed, q("010-1234-5678", "서울", "역삼")), true);
+  check("신청서 소속을 못 맞춰도 붙는다", !!findSponsor(parsed, q("010-1234-5678", "", "")), true);
   check("명단이 비워 둔 줄은 아무 지역·챕터나", !!findSponsor(parsed, q("010-5555-4444", "대구", "수성")), true);
   check("띄어쓰기 차이는 같게 본다", !!findSponsor(parsed, q("010-1234-5678", "서 울", "강 남")), true);
 
@@ -97,7 +104,7 @@ async function main() {
   const half = applySponsor(parsed, { phone: "010-7777-6666", region: "부산", chapter: "해운대", name: "박영희", programTitle: "LTT : 파운데이션 T.", price: 120000 });
   check("부분 지원 청구액", half.price, 70000);
   const wrongRegion = applySponsor(parsed, { phone: "010-7777-6666", region: "서울", chapter: "해운대", name: "박영희", programTitle: "LTT : 파운데이션 T.", price: 120000 });
-  check("지역이 어긋나면 정가", wrongRegion.price, 120000);
+  check("지역이 어긋나도 지원은 그대로", wrongRegion.price, 70000);
   const none = applySponsor(parsed, { phone: "01000000000", region: "서울", chapter: "강남", name: "무명", programTitle: "LTT : 파운데이션 T.", price: 120000 });
   check("비대상 청구액", none.price, 120000);
   const over = applySponsor(
@@ -105,6 +112,22 @@ async function main() {
     { phone: "01055554444", region: "서울", chapter: "강남", name: "과잉", programTitle: "LTT : 파운데이션 T.", price: 120000 }
   );
   check("지원금이 정가보다 커도 음수는 없다", over.price, 0);
+
+  console.log("\n[6-1] 실제 명단에서 어긋나 있던 표기들 — 그래도 0원이어야 한다");
+  const drift = parseSponsorRows([
+    HEADER,
+    ["ADMIN", "ADMIN", "관리자", "010-1111-0001", "", "33,000", "폼에 없는 지역·챕터"],
+    ["부산", "파이오니아", "부산멤버", "010-1111-0002", "", "33,000", "폼은 부산1 · 파이어니어"],
+    ["고양", "션샤인", "고양멤버", "010-1111-0003", "", "33,000", "폼은 선샤인"],
+  ]);
+  for (const [phone, region, chapter] of [
+    ["010-1111-0001", "강남", "올인원"],
+    ["010-1111-0002", "부산1", "파이어니어"],
+    ["010-1111-0003", "고양", "선샤인"],
+  ] as string[][]) {
+    const r = applySponsor(drift, { phone, region, chapter, name: "", programTitle: "LTT : 의장 T.", price: 33000 });
+    check(`${region} ${chapter} → 0원`, r.price, 0);
+  }
 
   console.log("\n[6-2] 여러 줄이 맞으면 더 구체적인 줄을 쓴다");
   const layered = parseSponsorRows([
@@ -125,6 +148,37 @@ async function main() {
     console.log(`   · ${e.row}행  ${where}  ${e.name || "(이름 없음)"}  ${e.phone}  [${scope}]  ${amount}${e.note ? "  — " + e.note : ""}`);
   }
   if (live.length > 20) console.log(`   ... 외 ${live.length - 20}명`);
+
+  // ⛔ 명단의 지원 과목이 실제 과목과 하나도 안 맞으면 그 줄은 영영 안 걸린다.
+  //    조용히 정가로 결제되므로 여기서 시끄럽게 알린다.
+  const titles = (await googleSheetsService.getSecondarySheetPrograms()).map((p: any) => normalizeTitle(p.title));
+  let orphan = 0;
+  for (const e of live) {
+    for (const p of e.programs) {
+      if (!titles.includes(normalizeTitle(p))) {
+        console.log(`  ✗ ${e.row}행 지원 과목 "${p}" 은 어느 과목과도 안 맞습니다 (이 줄은 지원이 안 붙습니다)`);
+        orphan++; bad++;
+      }
+    }
+  }
+  if (live.length && !orphan) console.log("  ✓ 지원 과목 표기가 전부 실제 과목과 맞습니다");
+
+  // 명단의 지역·챕터 표기가 신청 폼 값과 다른 줄. **지원은 그대로 붙는다**(거부권이 없다).
+  // 실패로 세지 않고, 담당자가 보고 고칠 수 있게 보여만 준다.
+  const { REGION_CHAPTERS } = await import("../client/src/lib/regions");
+  const formPairs = new Set<string>();
+  for (const [region, chapters] of Object.entries(REGION_CHAPTERS as Record<string, string[]>)) {
+    for (const c of chapters) formPairs.add(`${normalizeLabel(region)}|${normalizeLabel(c)}`);
+  }
+  const drifted = live.filter(
+    (e) => e.region && e.chapter && !formPairs.has(`${normalizeLabel(e.region)}|${normalizeLabel(e.chapter)}`)
+  );
+  if (drifted.length) {
+    console.log(`\n  ⓘ 신청 폼에 없는 소속 표기 ${drifted.length}줄 — 지원은 그대로 붙습니다(참고용)`);
+    for (const e of drifted) console.log(`     · ${e.row}행  ${e.region} · ${e.chapter}  ${e.name}`);
+  } else if (live.length) {
+    console.log("  ✓ 명단의 지역·챕터 표기가 전부 신청 폼 값과 맞습니다");
+  }
 
   console.log("\n" + "─".repeat(78));
   console.log(bad === 0 ? "전부 통과" : `실패 ${bad}건`);

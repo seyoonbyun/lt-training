@@ -7,11 +7,18 @@
  * 유료 결제와 **완전히 같은 경로**를 탄다 — 갈래를 늘리면 그 중 하나가 조용히 빠진다.
  *
  * 판정 기준
- *   **연락처 + 지역 + 챕터**가 다 맞아야 한다(2026-08-24). 이름은 대조하지 않는다 —
- *   오타 한 글자로 지원이 안 먹으면 그분이 돈을 내버리고, 되돌리려면 토스 상점관리자에서
- *   사람이 카드 취소까지 해야 한다. 이름이 다르면 로그로만 남긴다.
- *   ⭐ 지역·챕터·과목 칸을 **비워 두면 그 항목은 안 따진다**(전 지역/전 챕터/전 과목).
- *      적어 두면 반드시 맞아야 한다. 여러 줄이 맞으면 **더 구체적인 줄**을 쓴다.
+ *   **연락처 하나로 판정한다**(2026-08-25). 명단에 번호가 있으면 어느 지역·챕터에서
+ *   어느 과목을 고르든 지원이 붙는다.
+ *   ⛔ 지역·챕터는 **거부권을 갖지 않는다.** 한때는 셋이 다 맞아야 했는데(2026-08-24),
+ *      담당자가 적는 표기와 신청 폼의 값이 원래 다르다 — `ADMIN`(폼에 없는 값)·
+ *      `부산`(폼은 `부산1`)·`파이오니아`(폼은 `파이어니어`)·`션샤인`(폼은 `선샤인`).
+ *      실제 명단 97줄 중 21줄이 이 한 글자 차이로 조용히 정가 결제될 상태였다.
+ *      약한 신호에 거부권을 주지 않는다 — **순위(어느 줄을 쓸지)에만** 쓴다.
+ *   ⭐ 이름도 대조하지 않는다. 오타 한 글자로 지원이 안 먹으면 그분이 돈을 내버리고,
+ *      되돌리려면 토스 상점관리자에서 사람이 카드 취소까지 해야 한다. 다르면 로그로만 남긴다.
+ *   ⭐ 지원 과목 칸을 **비워 두면 전 과목**이다(지금 명단은 97줄 전부 비어 있다).
+ *      적어 두면 그 과목만 지원한다 — 담당자가 일부러 좁힌 것이므로 그건 지킨다.
+ *      여러 줄이 맞으면 **더 구체적인 줄**을 쓴다.
  *
  * ⛔ 명단을 못 읽었을 때 결제를 막지 않는다.
  *   막으면 지원 대상이 아닌 분들까지 전부 신청을 못 한다. 대신 **직전에 성공한 명단**을
@@ -32,9 +39,9 @@ export const SPONSOR_COLUMNS = [
 export const SPONSOR_COLUMNS_V1 = ["멤버명", "연락처", "지원 과목", "지원 금액(원)", "비고"] as const;
 
 export interface SponsorEntry {
-  /** 지역. 비어 있으면 지역을 따지지 않는다. */
+  /** 지역. 판정에서 거부권이 없다 — 여러 줄이 맞을 때 순위에만 쓴다. */
   region: string;
-  /** 챕터. 비어 있으면 챕터를 따지지 않는다. */
+  /** 챕터. 지역과 마찬가지로 순위에만 쓴다. */
   chapter: string;
   /** 시트에 적힌 이름. 대조에는 쓰지 않고 로그·경보에만 쓴다. */
   name: string;
@@ -75,11 +82,18 @@ export function normalizePhone(value: string): string {
 
 /**
  * 과목명 비교용 정규화.
- * 담당자가 `LTT : 파운데이션` 을 `파운데이션` 으로 적는 일이 흔해 접두사와 공백을 털어낸다.
+ *
+ * 담당자는 `LTT : 파운데이션 T.` 를 그냥 `파운데이션` 이라고 적는다(실제로 그랬다).
+ * 앞의 `LTT :` 와 뒤의 `T.` 를 둘 다 떼야 같은 과목으로 본다 — 안 그러면
+ * **지원이 조용히 안 붙고 그분이 정가를 결제한다.**
+ *
+ * ⛔ 뒤의 `T` 는 **점이 있거나 앞에 공백이 있을 때만** 뗀다.
+ *    그냥 `/T$/` 로 떼면 `ST` 가 `S` 가 되어 ST T. 과목이 영영 안 맞는다.
  */
 export function normalizeTitle(value: string): string {
   return String(value || "")
     .replace(/^LTT\s*[:：]\s*/i, "")
+    .replace(/(\s+T\.?|T\.)\s*$/i, "")
     .replace(/\s+/g, "")
     .toLowerCase();
 }
@@ -96,6 +110,23 @@ function parseSupportAmount(value: string): number | null {
   const n = Number(raw.replace(/[^0-9.-]/g, ""));
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.floor(n);
+}
+
+/**
+ * 신청명단 I열(`특이사항 & 문의`)에 남기는 표기.
+ * 지원 대상자가 신청하면 담당자가 한눈에 알아보게 이 문구를 붙인다.
+ */
+export const SPONSOR_NOTE = "교육비 지원";
+
+/**
+ * 신청자가 쓴 특이사항을 지우지 않고 표기만 앞에 붙인다.
+ * 이미 붙어 있으면 그대로 둔다 (이어하기·재결제로 두 번 지나갈 수 있다).
+ */
+export function withSponsorNote(notes: string): string {
+  const current = String(notes || "").trim();
+  if (!current) return SPONSOR_NOTE;
+  if (current.includes(SPONSOR_NOTE)) return current;
+  return `${SPONSOR_NOTE} / ${current}`;
 }
 
 // ── 명단 읽기 ────────────────────────────────────────────────────────────────
@@ -206,10 +237,11 @@ export interface SponsorQuery {
 }
 
 /**
- * 연락처 + 지역 + 챕터 + 과목으로 지원 대상 한 건을 찾는다. 못 찾으면 undefined.
+ * 지원 대상 한 건을 찾는다. 못 찾으면 undefined.
  *
- * 명단 칸이 비어 있으면 그 항목은 안 따진다. 여러 줄이 맞으면 **채워진 칸이 많은 줄**을
- * 쓴다 — 전 과목 줄과 특정 과목 줄이 같이 있을 때 구체적인 쪽이 이겨야 한다.
+ * 거부권을 가진 축은 **연락처**뿐이다. 지원 과목을 적어 둔 줄은 그 과목에만 쓰이고,
+ * 지역·챕터는 **어느 줄을 쓸지 고르는 순위**로만 쓴다 (표기가 폼과 달라도 지원은 붙는다).
+ * 여러 줄이 맞으면 지금 신청과 더 많이 겹치는 줄이 이긴다.
  */
 export function findSponsor(
   entries: SponsorEntry[],
@@ -224,17 +256,20 @@ export function findSponsor(
 
   const matched = entries.filter((e) => {
     if (e.phone !== target) return false;
-    if (e.region && normalizeLabel(e.region) !== region) return false;
-    if (e.chapter && normalizeLabel(e.chapter) !== chapter) return false;
+    // 지원 과목을 적어 둔 줄은 그 과목에만 쓴다. 비어 있으면 전 과목.
     if (e.programs.length && !e.programs.some((p) => normalizeTitle(p) === title)) return false;
     return true;
   });
   if (matched.length === 0) return undefined;
 
-  const specificity = (e: SponsorEntry) =>
-    (e.region ? 1 : 0) + (e.chapter ? 1 : 0) + (e.programs.length ? 1 : 0);
+  // 순위 — 과목을 콕 집은 줄 > 지역이 맞는 줄 > 챕터가 맞는 줄.
+  // 지역·챕터가 어긋난 줄도 후보에서 빠지지 않는다. 밀릴 뿐이다.
+  const rank = (e: SponsorEntry) =>
+    (e.programs.length ? 4 : 0) +
+    (e.region && normalizeLabel(e.region) === region ? 2 : 0) +
+    (e.chapter && normalizeLabel(e.chapter) === chapter ? 1 : 0);
 
-  return matched.reduce((best, e) => (specificity(e) > specificity(best) ? e : best));
+  return matched.reduce((best, e) => (rank(e) > rank(best) ? e : best));
 }
 
 /**
@@ -257,12 +292,21 @@ export function applySponsor(
     ? item.price
     : Math.min(sponsor.supportAmount, item.price);
 
-  // 이름이 다르면 사람이 확인할 수 있게 남긴다. 지원 자체는 그대로 적용한다.
+  // 이름·지역·챕터가 달라도 지원은 그대로 적용하고, 사람이 확인할 수 있게 남기기만 한다.
+  // 여기서 막으면 그분이 정가를 결제하고 되돌리는 데 사람 손이 든다.
   const applicant = String(item.name || "").replace(/\s+/g, "");
   if (sponsor.name && applicant && sponsor.name.replace(/\s+/g, "") !== applicant) {
     console.warn(
       `⚠ 지원 대상 이름 불일치 (지원은 적용): 명단 ${sponsor.row}행 "${sponsor.name}" / 신청 "${item.name}" / ${item.programTitle}`
     );
+  }
+  const mismatch: string[] = [];
+  if (sponsor.region && normalizeLabel(sponsor.region) !== normalizeLabel(item.region || ""))
+    mismatch.push(`지역 명단 "${sponsor.region}" / 신청 "${item.region || ""}"`);
+  if (sponsor.chapter && normalizeLabel(sponsor.chapter) !== normalizeLabel(item.chapter || ""))
+    mismatch.push(`챕터 명단 "${sponsor.chapter}" / 신청 "${item.chapter || ""}"`);
+  if (mismatch.length) {
+    console.warn(`⚠ 지원 대상 소속 불일치 (지원은 적용): 명단 ${sponsor.row}행 — ${mismatch.join(" · ")}`);
   }
 
   console.log(

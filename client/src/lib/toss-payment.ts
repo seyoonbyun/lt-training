@@ -12,6 +12,8 @@ export interface PreparedOrder {
   free?: boolean;
   /** 지원 적용 전 정가 합계 */
   listAmount?: number;
+  /** 고른 과목 중 **이미 신청이 완료돼** 이번 접수에서 빠진 과목명. 화면에서 알려 준다. */
+  skippedDuplicates?: string[];
 }
 
 /**

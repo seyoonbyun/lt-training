@@ -919,6 +919,12 @@ export class GoogleSheetsService {
     amount?: number;
     /** 승인 시점에도 한 번 더 남긴다 - 「결제 이어하기」는 행이 이미 있어 신청 때 못 썼을 수 있다. */
     payer?: { name: string; phone: string; email?: string };
+    /**
+     * I열 `특이사항 & 문의` 를 덮어쓸 값 (지원 대상 표기).
+     * ⛔ 부르는 쪽이 **신청자가 쓴 원문을 이미 품은 문자열**을 준다. 여기서 만들지 않는다 -
+     *    이 함수는 행을 읽지 않으므로 직접 만들면 신청자가 쓴 문의가 날아간다.
+     */
+    notes?: string;
   }): Promise<void> {
     if (!row || row < 2) {
       console.warn('⚠ markApplicationPaid: 행 번호가 없어 시트 기록을 건너뜁니다.', info.orderId);
@@ -947,6 +953,13 @@ export class GoogleSheetsService {
         })],
       },
     ];
+
+    if (info.notes) {
+      data.push({
+        range: cell(APPLICATIONS_TAB, row, '특이사항 & 문의'),
+        values: [[info.notes]],
+      });
+    }
 
     if (info.payer?.name) {
       data.push({

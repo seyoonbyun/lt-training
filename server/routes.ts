@@ -15,7 +15,7 @@ import {
 import type { PendingOrder } from "./services/toss-payments";
 import { sendEnrollmentNotice } from "./services/enrollment-notify";
 import { createResumeToken, verifyResumeToken } from "./services/resume-token";
-import { applySponsorToItems, normalizePhone } from "./services/sponsor-list";
+import { applySponsorToItems, normalizePhone, withSponsorNote } from "./services/sponsor-list";
 import { idx } from "./services/sheet-schema";
 
 /**
@@ -65,6 +65,8 @@ async function markOrderRowsPaid(
         amount: rowAmount,
         // 「결제 이어하기」는 행이 이미 있어 신청 때 결제자를 못 썼다. 여기서 채운다.
         payer: order.payer || { name: order.name, phone: order.phone, email: order.email },
+        // 지원 대상 표기(I열). 신청 때 이미 붙은 건은 값이 없어 건드리지 않는다.
+        notes: order.rowNotes?.[i],
       });
     } catch (sheetError) {
       console.error(`⚠ 결제는 승인됐으나 시트 기록에 실패했습니다: ${order.orderId} (행 ${row})`, sheetError);
@@ -383,6 +385,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const candidate = reusableRows.get(key);
         const reuseRow = candidate && !usedRows.has(candidate) ? candidate : undefined;
         if (reuseRow) usedRows.add(reuseRow);
+
+        // 지원이 붙은 건은 신청명단 I열(특이사항 & 문의)에 `교육비 지원` 이라고 남긴다.
+        // ⭐ 행을 **만들기 전에** 붙인다 — 만든 뒤에 따로 쓰면 시트 호출이 한 번 더 늘고,
+        //    신청자가 적은 특이사항을 되읽어야 해서 덮어쓸 위험이 생긴다.
+        if (sponsored[i].discount > 0) {
+          item.data.notes = withSponsorNote(item.data.notes || "");
+        }
 
         const application = await storage.submitApplication(item.data, reuseRow);
         const sheetRow = (application as any).sheetRow as number | undefined;
@@ -707,7 +716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const rowMap = await googleSheetsService.getApplicationRowsByNumbers(payload.rows);
     const programs = await googleSheetsService.getSecondarySheetPrograms();
 
-    const items: Array<{ row: number; title: string; name: string; phone: string; email: string; region: string; chapter: string; participationType: string; price: number; listPrice?: number }> = [];
+    const items: Array<{ row: number; title: string; name: string; phone: string; email: string; region: string; chapter: string; participationType: string; price: number; listPrice?: number; notes?: string; sponsorNote?: string }> = [];
     const alreadyPaid: string[] = [];
     const closed: string[] = [];
 
@@ -746,6 +755,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         region: String(row[idx("지역")] || "").trim(),
         chapter: String(row[idx("챕터")] || "").trim(),
         participationType: String(row[7] || "").trim(),
+        // I열 표기를 덧붙일 때 신청자가 쓴 내용을 지우지 않으려고 원문을 들고 간다.
+        notes: String(row[idx("특이사항 & 문의")] || "").trim(),
         price: program.price,
       });
     }
@@ -774,6 +785,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     items.forEach((item, i) => {
       item.listPrice = sponsored[i].listPrice;
       item.price = sponsored[i].price;
+      // 이어하기 행은 신청 때 만들어져 표기가 없을 수 있다. 승인 시점에 채운다.
+      if (sponsored[i].discount > 0) item.sponsorNote = withSponsorNote(item.notes || "");
     });
 
     return { payload, payer, items, alreadyPaid, closed };
@@ -861,6 +874,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // 승인되면 이 행들의 J열이 찍힌다 — 새 행이 아니라 **원래 신청 행**이다.
         sheetRows: items.map((i: any) => i.row),
         rowAmounts: items.map((i: any) => i.price),
+        // 지원이 붙은 행만 값이 있다. 승인 때 I열에 `교육비 지원` 을 남긴다.
+        rowNotes: items.map((i: any) => i.sponsorNote),
         quantity: items.length,
         free,
         listAmount,

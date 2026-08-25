@@ -107,6 +107,16 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
     onSuccess: async (order) => {
       queryClient.invalidateQueries({ queryKey: ["/api/applications"] });
 
+      // 고른 과목 중 일부만 이미 신청한 경우. 서버가 그 과목을 빼고 접수했으므로
+      // 말해 주지 않으면 결제 금액이 왜 줄었는지 알 수 없다.
+      const skipped = order.skippedDuplicates || [];
+      if (skipped.length > 0) {
+        toast({
+          title: "이미 신청하신 내역이 있습니다",
+          description: `${skipped.join(", ")} 은(는) 이미 신청이 완료되어 이번 결제에서 빠졌습니다.`,
+        });
+      }
+
       toast({
         title: order.free ? "지원 대상으로 확인되었습니다" : "결제창을 엽니다",
         description: order.free
@@ -127,7 +137,7 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
       const isDuplicate = error?.status === 409 || (error?.message && error.message.includes("409"));
       
       toast({
-        title: isDuplicate ? "접수보류" : "신청 실패",
+        title: isDuplicate ? "이미 신청하신 내역이 있습니다" : "신청 실패",
         description: isDuplicate 
           ? "앗, 대표님, 이미 동일 과목에 신청이 완료되신 것으로 보입니다 !\n\n신청현황 대시보드 > 신청자 명단에서 확인하실 수 있어요 :)"
           : (error instanceof Error ? error.message : "신청 처리 중 오류가 발생했습니다."),
