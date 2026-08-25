@@ -48,3 +48,5 @@ movecol-backup-*.json
 addcol-backup-*.json
 stamp-normalize-backup-*.json
 scripts/_*.ts
+# 검증·정리 스크립트가 뜨는 스냅샷. 신청명단 전문(이름·연락처·이메일)이 들어간다.
+scripts/_*.json
