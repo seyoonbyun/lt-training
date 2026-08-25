@@ -885,6 +885,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: i.email,
           programTitle: i.title,
           trainingType: i.participationType.includes("실시간") ? "live" : "recorded",
+          // 발송 결과를 적을 행. 이게 빠지면 문자·메일은 나가는데 발송 기록 열만 통째로 빈다.
+          sheetRow: i.row,
         })),
         payer,
         status: "pending",
