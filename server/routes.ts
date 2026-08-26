@@ -15,7 +15,7 @@ import {
 import type { PendingOrder } from "./services/toss-payments";
 import { sendEnrollmentNotice } from "./services/enrollment-notify";
 import { createResumeToken, verifyResumeToken } from "./services/resume-token";
-import { applySponsorToItems, normalizePhone, withSponsorNote } from "./services/sponsor-list";
+import { applySponsorToItems, withSponsorNote } from "./services/sponsor-list";
 import { idx } from "./services/sheet-schema";
 
 /**
@@ -600,16 +600,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return candidate;
       });
 
+      // 교육비 지원은 **결제 경로를 가리지 않는다** (2026-08-26 지시).
+      //
+      // ⛔ 한때 "개별 신청 한정" 이었다(2026-08-24). 그런데 챕터가 멤버들을 **대신 단체로**
+      //    신청하는 것이 오히려 흔해서, 지원 대상자가 일괄 명단에 섞이면 그대로 정가가
+      //    청구됐다 — 8/22~8/26 사이 13건이 그렇게 결제됐고 컴플레인으로 드러났다.
+      // ⭐ 지원은 **수강자 본인** 기준으로 붙는다. 대신 내주는 분이 있어도 마찬가지고,
+      //    그만큼 결제자의 청구액이 줄어든다(지원은 수강자에게 준 것이지 결제자에게 준 게 아니다).
+      // ⭐ 행을 **만들기 전에** 붙인다 — I열 표기가 신청 행과 함께 들어가야
+      //    나중에 되읽어 덮어쓸 일이 없다(개별 신청과 같은 순서).
+      const sponsored = await applySponsorToItems(
+        validated.map((app: any) => ({
+          phone: app.phone,
+          name: app.name,
+          region: app.region || "",
+          chapter: app.chapter || "",
+          programTitle: app.programTitle,
+          price: priceByTitle.get(app.programTitle) || 0,
+        }))
+      );
+      validated.forEach((app: any, i: number) => {
+        if (sponsored[i].discount > 0) app.notes = withSponsorNote(app.notes || "");
+      });
+
       // 결제 전에 신청 행을 먼저 만든다. J열(결제완료)이 비어 있어 아직 집계되지 않는다.
       const submitted = await storage.bulkSubmitApplications(validated, reuseRowsForSubmit, {
         name: String(payer.name).trim(),
         phone: String(payer.phone).trim(),
         email: String(payer.email || "").trim(),
       });
-
-      // ⛔ 일괄(대리) 신청에는 교육비 지원을 적용하지 않는다 — 지원은 개별 신청 한정이다.
-      //    대신 결제하는 분이 따로 있어 "누구에게 준 지원인가" 가 흐려지고,
-      //    수강자 연락처가 선택 입력이라 애초에 판정할 수 없는 줄이 섞인다.
 
       // 행 번호와 금액을 같은 순서로 모은다. 과목마다 단가가 달라도 행별로 정확히 기록된다.
       const sheetRows: number[] = [];
@@ -625,7 +644,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const sheetRow = typeof raw === "number" && raw > 1 ? raw : 0;
         const title = validated[index]?.programTitle || "";
         sheetRows.push(sheetRow);
-        rowAmounts.push(priceByTitle.get(title) || 0);
+        // 지원이 붙은 행은 깎인 금액. 전원 지원이면 합계가 0원이 되어 결제창을 안 띄운다.
+        rowAmounts.push(sponsored[index]?.price ?? (priceByTitle.get(title) || 0));
         recordedTitles.push(title);
         recipients.push({
           name: String(validated[index]?.name || "").trim(),
@@ -644,6 +664,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const quantity = sheetRows.length;
       const amount = rowAmounts.reduce((sum, price) => sum + price, 0);
+      const listAmount = sponsored.reduce((sum, s) => sum + s.listPrice, 0);
+      // 0원이면 토스를 태우지 않고 서버가 자체 승인한다 (/api/payments/confirm-free).
+      // 토스는 0원을 승인하지 못한다(카드 최소 결제 금액 100원).
+      const free = amount === 0;
       const distinctTitles = Array.from(new Set(recordedTitles));
       const memberCount = new Set(
         validated.map(
@@ -669,6 +693,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sheetRows,
         rowAmounts,
         quantity,
+        free,
+        listAmount,
         recipients,
         payer: {
           name: String(payer.name).trim(),
@@ -681,6 +707,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json({
         orderId,
         amount,
+        free,
+        listAmount,
         quantity,
         memberCount,
         orderName,
@@ -764,17 +792,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // 지원 대상은 여기서 깎는다. 화면에 보이는 금액과 실제 청구가 한 곳에서 나온다 —
     // 따로 계산하면 화면은 0원인데 청구는 정가인 사고가 난다.
     //
-    // ⛔ 지원은 **개별 신청 한정**이다. 이어하기 링크에는 개별 행과 일괄(대리) 행이 섞여
-    //    들어오므로 행마다 가른다 — 개별 신청은 결제자가 신청자 본인이라 두 연락처가 같고,
-    //    일괄은 대신 내는 분이 따로 있어 다르다. 결제자 연락처가 아직 비어 있는 옛 행은
-    //    본인 결제로 본다(개별 신청이 그 열을 채우기 전에 만들어진 행).
-    const selfPaid = items.map((i) => {
-      const payerPhone = normalizePhone(String(rowMap.get(i.row)?.[idx("결제자 연락처")] || ""));
-      return !payerPhone || payerPhone === normalizePhone(i.phone);
-    });
+    // ⭐ 판정 축은 **행의 수강자 연락처**다. 누가 대신 내든 상관없다 (2026-08-26 지시).
+    //    한때는 결제자 연락처가 본인 번호인 행만 지원을 붙였는데, 챕터가 멤버를 대신
+    //    신청·결제하는 경우 지원 대상자가 그대로 정가를 냈다.
     const sponsored = await applySponsorToItems(
-      items.map((i, n) => ({
-        phone: selfPaid[n] ? i.phone : "",   // 대리 결제 건은 판정 자체를 하지 않는다
+      items.map((i) => ({
+        phone: i.phone,
         name: i.name,
         region: i.region,
         chapter: i.chapter,

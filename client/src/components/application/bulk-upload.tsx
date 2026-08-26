@@ -147,12 +147,19 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
       queryClient.invalidateQueries({ queryKey: ["/api/applications"] });
 
       const skipped = order.skippedDuplicates || [];
+      // 명단이 전원 교육비 지원 대상이면 청구액이 0원이라 결제창을 띄우지 않는다.
+      // "결제창을 엽니다" 라고 해 놓고 안 뜨면 이탈한 것으로 오해한다.
+      const skippedLine =
+        skipped.length > 0 ? `\n\n이미 신청된 건은 제외했습니다: ${skipped.join(", ")}` : "";
       toast({
-        title: `${order.memberCount || 0}명 · ${order.quantity}건 접수 · 결제창을 엽니다`,
-        description:
-          skipped.length > 0
-            ? `이미 신청된 건은 제외했습니다: ${skipped.join(", ")}\n\n제외분을 뺀 금액으로 결제됩니다.`
-            : "결제를 완료하셔야 신청이 확정됩니다.",
+        title: order.free
+          ? `${order.memberCount || 0}명 · ${order.quantity}건 접수 · 교육비 지원 대상입니다`
+          : `${order.memberCount || 0}명 · ${order.quantity}건 접수 · 결제창을 엽니다`,
+        description: order.free
+          ? `결제 없이 신청이 확정됩니다.${skippedLine}`
+          : (skipped.length > 0
+              ? `${skippedLine.trim()}\n\n제외분을 뺀 금액으로 결제됩니다.`
+              : "결제를 완료하셔야 신청이 확정됩니다."),
       });
 
       try {
