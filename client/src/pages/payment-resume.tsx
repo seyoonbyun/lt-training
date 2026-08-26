@@ -34,6 +34,8 @@ interface ResumeSummary {
   items: ResumeItem[];
   alreadyPaid: string[];
   closed: string[];
+  /** 취소·환불된 건. 결제 끝난 건과 갈라서 보여준다 — 이분들은 다시 신청하실 수 있다. */
+  cancelled?: string[];
 }
 
 const won = (n: number) => n.toLocaleString("ko-KR");
@@ -169,24 +171,53 @@ export default function PaymentResume() {
   if (!summary) return null;
 
   const empty = summary.items.length === 0;
+  // 결제할 것이 없는데 그 사유가 **전부 취소**인 경우. "이미 결제됨" 과 갈라야 한다.
+  const allCancelled = empty && (summary.cancelled?.length ?? 0) > 0;
 
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-10">
       <div className="w-full max-w-lg mx-auto bg-white rounded-xl shadow-sm border-t-4 border-red-600 p-6 sm:p-8">
         <h1 className="text-xl font-bold mb-1">LT 트레이닝 결제</h1>
         <p className="text-sm text-gray-600 mb-6">
-          {summary.payer?.name} 님, 아래 신청 내역의 결제를 이어서 진행하실 수 있습니다.
-          <br />
-          <span className="text-gray-500">
-            다시 입력하실 내용은 없으며, 필요하시면 아래에서 수정하실 수 있습니다.
-          </span>
+          {allCancelled ? (
+            <>{summary.payer?.name} 님, 이 링크의 신청 내역을 안내드립니다.</>
+          ) : (
+            <>
+              {summary.payer?.name} 님, 아래 신청 내역의 결제를 이어서 진행하실 수 있습니다.
+              <br />
+              <span className="text-gray-500">
+                다시 입력하실 내용은 없으며, 필요하시면 아래에서 수정하실 수 있습니다.
+              </span>
+            </>
+          )}
         </p>
 
         {empty ? (
-          <div className="rounded-lg bg-green-50 border border-green-200 p-4 text-center mb-6">
-            <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-green-600" />
-            <p className="text-sm font-medium text-green-800">결제가 이미 완료된 신청입니다.</p>
-          </div>
+          // ⛔ 취소·환불된 링크에 "결제가 이미 완료된 신청입니다" 를 띄우면 **거짓말**이다.
+          //   초록 체크까지 붙어 있어 "끝난 일" 로 읽히고, 다시 신청할 수 있다는 걸
+          //   모른 채 포기한다(2026-08-26 컴플레인). 두 경우를 갈라서 사실대로 적는다.
+          allCancelled ? (
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 text-center mb-6">
+              <AlertCircle className="w-8 h-8 mx-auto mb-2 text-gray-500" />
+              <p className="text-sm font-medium text-gray-800">취소·환불 처리된 신청입니다.</p>
+              <p className="mt-1 text-xs text-gray-600">
+                이 링크로는 결제하실 수 없습니다.
+                <br />
+                다시 수강하고 싶으시면 <strong>새로 신청하실 수 있습니다.</strong> 환불받으셨어도 재신청에 제한이 없습니다.
+              </p>
+              <a
+                href="/"
+                className="mt-3 inline-block rounded-md bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700"
+              >
+                신청 페이지로 가기
+              </a>
+            </div>
+          ) : (
+            <div className="rounded-lg bg-green-50 border border-green-200 p-4 text-center mb-6">
+              <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-green-600" />
+              <p className="text-sm font-medium text-green-800">결제가 이미 완료된 신청입니다.</p>
+            </div>
+          )
         ) : (
           <>
             <div className="flex items-center justify-between mb-2">
@@ -276,6 +307,27 @@ export default function PaymentResume() {
           <p className="text-xs text-gray-500 mb-3">
             이미 결제된 건은 제외했습니다 : {summary.alreadyPaid.join(", ")}
           </p>
+        )}
+        {/*
+          취소·환불된 건은 "이미 결제됨" 과 절대 섞지 않는다. 환불받은 분에게 그렇게 쓰면
+          거짓말이고, 다시 신청할 수 있다는 걸 모른 채 포기한다. 그래서 사실을 적고
+          신청 페이지로 가는 길을 바로 준다.
+        */}
+        {(summary.cancelled?.length ?? 0) > 0 && (
+          <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <p className="text-xs text-gray-700">
+              취소·환불 처리된 건은 제외했습니다 : {summary.cancelled!.join(", ")}
+            </p>
+            <p className="mt-1 text-xs text-gray-700">
+              다시 수강하고 싶으시면 <strong>새로 신청하실 수 있습니다.</strong> 환불받으셨어도 재신청에 제한이 없습니다.
+            </p>
+            <a
+              href="/"
+              className="mt-2 inline-block rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+            >
+              신청 페이지로 가기
+            </a>
+          </div>
         )}
         {summary.closed?.length > 0 && (
           <p className="text-xs text-gray-500 mb-3">

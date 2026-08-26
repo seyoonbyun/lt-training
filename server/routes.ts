@@ -747,6 +747,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const items: Array<{ row: number; title: string; name: string; phone: string; email: string; region: string; chapter: string; participationType: string; price: number; listPrice?: number; notes?: string; sponsorNote?: string }> = [];
     const alreadyPaid: string[] = [];
     const closed: string[] = [];
+    // 취소·환불된 행. **결제된 것과 같이 묶지 않는다** — 환불받은 분에게 "이미 결제가
+    // 완료된 신청입니다" 라고 하면 사실이 아니고, 그 거짓 안내 때문에 다시 신청할 수
+    // 있다는 걸 모른 채 포기한다(2026-08-26 컴플레인. 오픈 당일 57명이 "이미 신청이
+    // 완료되신 것으로 보입니다" 로 포기한 것과 같은 모양이다).
+    const cancelled: string[] = [];
 
     // 결제자는 토큰에 담지 않는다(링크를 짧게 유지해야 문자로 보낼 수 있다).
     // 묶음의 첫 행에서 읽는다 - 단체 신청은 신청자 본인이 먼저 들어간다.
@@ -764,7 +769,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const title = String(row[1] || "").trim();
       const who = `${String(row[4] || "").trim()}(${title.replace(/^LTT\s*:\s*/, "")})`;
 
-      // 그 사이에 결제됐거나 취소됐으면 조용히 뺀다. 두 번 청구하면 안 된다.
+      // 그 사이에 결제됐거나 취소됐으면 뺀다. 두 번 청구하면 안 된다.
+      // 다만 **왜 뺐는지는 갈라서** 알려준다 — 취소된 분은 다시 신청하실 수 있다.
+      if (googleSheetsService.isRowCancelled(row)) { cancelled.push(who); continue; }
       if (!googleSheetsService.isRowPayable(row)) { alreadyPaid.push(who); continue; }
 
       const program = programs.find((p: any) => p.title === title);
@@ -812,7 +819,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (sponsored[i].discount > 0) item.sponsorNote = withSponsorNote(item.notes || "");
     });
 
-    return { payload, payer, items, alreadyPaid, closed };
+    return { payload, payer, items, alreadyPaid, closed, cancelled };
   }
 
   // 링크를 열면 보이는 내역. 결제는 아직 만들지 않는다.
@@ -821,7 +828,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loaded = await loadResumeItems(String(req.params.token || ""));
       if ("error" in loaded && loaded.error) return res.status(404).json({ message: loaded.error });
 
-      const { payload, payer, items, alreadyPaid, closed } = loaded as any;
+      const { payload, payer, items, alreadyPaid, closed, cancelled } = loaded as any;
       res.json({
         payer,
         amount: items.reduce((sum: number, i: any) => sum + i.price, 0),
@@ -836,6 +843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         listAmount: items.reduce((sum: number, i: any) => sum + (i.listPrice ?? i.price), 0),
         alreadyPaid,
         closed,
+        cancelled,
         expiresAt: payload.exp,
       });
     } catch (error) {
@@ -854,7 +862,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loaded = await loadResumeItems(String(req.params.token || ""));
       if ("error" in loaded && loaded.error) return res.status(404).json({ message: loaded.error });
 
-      const { payload, payer, items: allItems, alreadyPaid } = loaded as any;
+      const { payload, payer, items: allItems, alreadyPaid, cancelled } = loaded as any;
 
       // 주문서 수정: 결제할 건을 골라 보낼 수 있다. 링크가 담고 있는 행 안에서만 고를 수 있고,
       // 안 보내면 전부 결제한다. 제외한 건은 결제되지 않고 신청 대기로 남는다.
@@ -868,11 +876,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (items.length === 0) {
-        return res.status(409).json({
-          message: alreadyPaid.length > 0
+        // ⛔ 안내를 뭉뚱그리지 않는다. 환불받은 분에게 "이미 결제가 완료된 신청입니다" 는
+        //   **거짓말**이고, 그 한 줄 때문에 다시 신청할 수 있다는 걸 모른 채 포기한다.
+        //   취소가 하나라도 섞여 있으면 취소 안내를 먼저 준다 — 그분이 지금 알아야 할 사실이다.
+        const message = cancelled.length > 0
+          ? "취소·환불 처리된 신청입니다. 다시 수강하시려면 신청 페이지에서 새로 신청해 주세요."
+          : alreadyPaid.length > 0
             ? "이미 결제가 완료된 신청입니다."
-            : "결제할 수 있는 신청이 없습니다. 내셔널 오피스로 문의해 주세요.",
+            : "결제할 수 있는 신청이 없습니다. 내셔널 오피스로 문의해 주세요.";
+        return res.status(409).json({
+          message,
           alreadyPaid,
+          cancelled,
+          // 화면이 '신청하러 가기' 버튼을 띄울지 판단한다.
+          canReapply: cancelled.length > 0,
         });
       }
 

@@ -874,6 +874,14 @@ export class GoogleSheetsService {
     return !this.isCancelledRow(row) && !this.isPaidRow(row);
   }
 
+  /**
+   * 취소·환불된 행인가. 「결제 이어하기」가 **결제 끝난 행과 갈라서** 안내하려고 쓴다.
+   * 둘을 묶으면 환불받은 분에게 "이미 결제가 완료된 신청입니다" 라는 거짓말이 나간다.
+   */
+  isRowCancelled(row: string[]): boolean {
+    return this.isCancelledRow(row);
+  }
+
   /** routes/storage 가 같은 키를 쓰도록 공개한다. */
   buildReuseKey(entry: {
     programTitle: string; region: string; chapter: string; name: string; phone: string;
