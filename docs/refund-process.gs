@@ -228,6 +228,7 @@ function processRefund_(row) {
 
   var data = apps.getDataRange().getValues();
   var matched = [];   // {rowNumber, title, name}
+  var notListed = []; // 접수와 같은 주문·연락처지만 '취소할 수강자' 명단에 없어 **그대로 둔** 행
 
   for (var i = 1; i < data.length; i++) {
     var d = data[i];
@@ -246,15 +247,31 @@ function processRefund_(row) {
     var byName = name && attendeeText.indexOf(name) !== -1;
     if (!byOrder && !byPhone && !byName) continue;
 
+    // ⛔ 주문번호·연락처는 **어느 접수(주문)인지**만 가린다. 누구를 취소할지는
+    //    '취소할 수강자' 명단(폼 필수 항목)만이 정한다.
+    //    일괄 신청은 한 주문번호에 수강자가 수십 명이고, 결제자 본인의 수강 행도
+    //    그 주문에 함께 들어 있다. 주문번호·연락처만으로 고르면 명단에 적지도 않은
+    //    분들이 함께 취소되고, 안내 문자의 '취소 내역' 에 그 이름까지 실려
+    //    **결제자 본인도 취소된 것처럼** 나간다 (2026-08-26 컴플레인).
+    //    좁히는 방향이라 없던 취소가 새로 생기지는 않는다.
+    if (attendeeText && !byName) { notListed.push(title + ' - ' + name); continue; }
+
     matched.push({ rowNumber: i + 1, title: title, name: name, phone: rowPhone });
   }
 
   if (!matched.length) {
-    resp.getRange(row, C_RESULT).setValue('매칭 실패 — 수동 확인 필요');
+    // 같은 주문 안에 후보는 있었는데 이름이 명단과 안 맞아 하나도 못 고른 경우를 구분해 준다.
+    // 그냥 '매칭 실패' 라고만 적으면 담당자가 어디를 봐야 할지 알 수 없다.
+    var why = notListed.length
+      ? '이름이 \'취소할 수강자\' 와 달라 고르지 못함 (같은 주문 후보 ' + notListed.length + '건: ' + notListed.join(' / ') + ')'
+      : '수동 확인 필요';
+    resp.getRange(row, C_RESULT).setValue('매칭 실패 — ' + why);
     notifySettlement_(
       '[LTT] 환불 처리했으나 신청 행을 찾지 못했습니다.\n' +
       '접수자 ' + payer + ' / ' + subjects.join(', ') + '\n' +
-      '대상 ' + attendeeText + '\n신청명단에서 직접 S열(취소)에 시각을 적어주세요.');
+      '대상 ' + attendeeText + '\n' +
+      (notListed.length ? '같은 주문 후보 : ' + notListed.join(' / ') + '\n' : '') +
+      '신청명단에서 직접 S열(취소)에 시각을 적어주세요.');
     return;
   }
 
@@ -280,7 +297,10 @@ function processRefund_(row) {
   }
 
   var summary = matched.map(function (x) { return x.title + ' - ' + x.name; }).join(' / ');
-  resp.getRange(row, C_RESULT).setValue(stamp + ' 취소 ' + matched.length + '건 (' + summary + ')');
+  // 같은 주문이지만 명단에 없어 **그대로 둔** 행도 함께 적는다.
+  // 안 한 일을 안 적으면 "왜 저 사람은 취소가 안 됐지" 를 아무도 모른 채 지나간다.
+  var keptNote = notListed.length ? ' · 명단에 없어 그대로 둠 ' + notListed.length + '건 (' + notListed.join(' / ') + ')' : '';
+  resp.getRange(row, C_RESULT).setValue(stamp + ' 취소 ' + matched.length + '건 (' + summary + ')' + keptNote);
 
   // 신청자 안내
   sendSms_(phone,
@@ -317,7 +337,10 @@ function processRefund_(row) {
     '[LTT] 환불 처리 완료\n' +
     '접수자 ' + payer + ' (' + formatPhone_(phone) + ')\n' +
     (orderNo ? '주문번호 ' + orderNo + '\n' : '') +
-    '취소 ' + matched.length + '건\n' + summary);
+    '취소 ' + matched.length + '건\n' + summary +
+    (notListed.length
+      ? '\n\n[그대로 둔 행] 같은 주문이지만 \'취소할 수강자\' 명단에 없어 취소하지 않았습니다.\n' + notListed.join('\n')
+      : ''));
 }
 
 /** 접수되는 즉시(폼 제출) 나가는 안내 — 트리거: 함수 onRefundSubmit · 이벤트 유형 `양식 제출 시` */
