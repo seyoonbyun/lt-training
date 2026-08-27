@@ -17,6 +17,7 @@ import { sendEnrollmentNotice } from "./services/enrollment-notify";
 import { createResumeToken, verifyResumeToken } from "./services/resume-token";
 import { applySponsorToItems, withSponsorNote } from "./services/sponsor-list";
 import { idx } from "./services/sheet-schema";
+import { surveyFormUrl } from "../shared/site-links";
 
 /**
  * 결제 승인 뒤 참여 안내를 문자·이메일로 함께 보낸다.
@@ -95,6 +96,47 @@ function resumeTokenFor(rows: number[]): string | undefined {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  /**
+   * 만족도 설문으로 보내는 짧은 주소. 문자와 사이트 QR 이 **둘 다** 이 주소만 쓴다.
+   *
+   *   /survey?s=1  → 세션등록 A열 `Session 1` 의 과목으로 채워 넘긴다
+   *   /survey      → 오늘 진행된 과목(끝난 것 우선)으로 채워 넘긴다. QR 이 쓰는 형태다.
+   *
+   * ⭐ 과목을 **여기서** 채우는 이유 — 에어테이블 주소를 그대로 싣지 않으려는 것이다.
+   *    문자는 길면 줄바꿈에 잘리고, QR 은 한 번 박히면 못 바꾼다.
+   * ⛔ 과목을 못 찾아도 막지 않는다. 빈 폼으로 보내면 응답자가 직접 고르면 되지만,
+   *    오류 화면을 띄우면 그 사람의 응답은 영영 안 들어온다.
+   */
+  app.get("/survey", async (req, res) => {
+    let title = "";
+    try {
+      const wanted = String(req.query.s || "").replace(/[^0-9]/g, "");
+      const programs = (await googleSheetsService.getSecondarySheetPrograms()) as any[];
+
+      if (wanted) {
+        const hit = programs.find(
+          (p) => String(p.sessionNumber || "").replace(/[^0-9]/g, "") === wanted
+        );
+        title = hit?.title || "";
+      } else {
+        // QR 은 파라미터가 없다. 오늘 과목을 찾고, 여러 개면 끝 시각이 이른 것부터 지난 것을 고른다.
+        const { parseEndMinutes, todayKst, kstMinutes } = await import("./services/survey");
+        const today = todayKst();
+        const nowMin = kstMinutes();
+        const todays = programs
+          .filter((p) => p.formattedDate &&
+            new Date(p.formattedDate).toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" }) === today)
+          .map((p) => ({ title: p.title, end: parseEndMinutes(p.time) ?? 24 * 60 }))
+          .sort((a, b) => a.end - b.end);
+        title = (todays.find((p) => p.end <= nowMin) || todays[0])?.title || "";
+      }
+    } catch (error: any) {
+      console.error("[설문] 과목 확인 실패 — 빈 폼으로 보냅니다:", error?.message || error);
+    }
+
+    res.redirect(302, surveyFormUrl(title));
+  });
+
   /**
    * 안내 메일 미리보기 (개발용). 실제 발송은 하지 않는다.
    *   /api/dev/notice-preview?title=<과목명>&type=live|recorded&kind=confirm|reminder

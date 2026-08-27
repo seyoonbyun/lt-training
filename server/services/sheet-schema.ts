@@ -50,6 +50,7 @@ export const COLUMNS = [
   "미결제 안내 문자 발송",
   "리마인드1차",
   "리마인드2차",
+  "설문 링크 문자 발송",
 ] as const;
 
 export type ColumnName = (typeof COLUMNS)[number];

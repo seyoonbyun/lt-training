@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { ApplicationTypeModal } from "@/components/application/application-type-modal";
 import { Calendar, Clock, User, MapPin, AlertTriangle, ArrowRight, Monitor, Users, ExternalLink } from "lucide-react";
-import { TRAINING_SUMMARY_URL } from "@shared/site-links";
+import { TRAINING_SUMMARY_URL, SURVEY_PATH } from "@shared/site-links";
 import heroImage from "@assets/Image_fx_1755098115275.jpg";
 import heroVideo from "@assets/team_1755249611475.mp4";
 import buildingImage from "@assets/화면 캡처 2025-08-11 232105_1754922103429.png";
@@ -794,6 +794,33 @@ export default function Home() {
                   >
                     강의 이수 신청
                     <ExternalLink className="w-4 h-4 ml-2" />
+                  </a>
+
+                  {/*
+                    만족도 설문 — 교육이 끝나면 문자로도 나가지만, 강의실에서 화면을 띄워
+                    바로 찍을 수 있게 QR 을 같이 둔다.
+                    ⭐ QR·링크 모두 우리 도메인 `/survey` 다. 서버가 그날 과목을 채워 넘기므로
+                       과목이 바뀌어도 이 이미지를 다시 만들지 않는다.
+                  */}
+                  <a
+                    href={SURVEY_PATH}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 flex items-center gap-4 rounded-lg border border-gray-200 bg-white p-4 text-left transition-all hover:border-red-300 hover:shadow-md"
+                  >
+                    <img
+                      src="/survey-qr.svg"
+                      alt="교육 만족도 설문 QR 코드"
+                      width={96}
+                      height={96}
+                      className="h-24 w-24 flex-shrink-0 rounded border border-gray-100 bg-white"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-base font-semibold text-foreground">교육 만족도 설문</span>
+                      <span className="mt-1 block text-sm text-muted-foreground">
+                        QR 을 찍거나 이 칸을 눌러 주세요. 수강하신 과목은 자동으로 채워집니다. (1분)
+                      </span>
+                    </span>
                   </a>
                 </div>
               </div>
