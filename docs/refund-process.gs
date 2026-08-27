@@ -226,6 +226,21 @@ function processRefund_(row) {
   var attendeeText = String(r[C_ATTENDEES - 1] || '');
   var orderNo = String(r[C_ORDER - 1] || '').trim();
 
+  /**
+   * 수기 접수 — 유선으로 받은 건을 담당자가 시트에 직접 적은 행.
+   *
+   * 폼으로 들어오면 주문번호·연락처·'취소할 수강자' 가 채워지지만, 손으로 적을 때는
+   * **성명 한 칸만** 있는 경우가 흔하다(2026-08-24 김형곤 건). 그러면 신원 확인 세 갈래가
+   * 전부 비어 아무 행도 못 고르고 '매칭 실패' 로 끝났다 — 취소도, 안내 문자도 안 나갔다.
+   *
+   * ⭐ 성명을 '취소할 수강자' 로 삼아 이름 매칭을 태운다. 매칭 규칙 자체는 그대로다.
+   * ⛔ **넓히는 게 아니라 입구만 열어 준다.** 이름만으로 여러 행이 걸리면(한 사람이
+   *    여러 과목을 신청한 경우) 아래에서 **아무것도 취소하지 않고** 후보를 적어 되돌려준다.
+   *    엉뚱한 과목을 취소하는 것이 처리 지연보다 훨씬 나쁘다.
+   */
+  var manual = !orderNo && !digits_(r[C_PHONE - 1]) && !trim_(attendeeText);
+  if (manual && payer) attendeeText = payer;
+
   var data = apps.getDataRange().getValues();
   var matched = [];   // {rowNumber, title, name}
   var notListed = []; // 접수와 같은 주문·연락처지만 '취소할 수강자' 명단에 없어 **그대로 둔** 행
@@ -259,12 +274,32 @@ function processRefund_(row) {
     matched.push({ rowNumber: i + 1, title: title, name: name, phone: rowPhone });
   }
 
+  /**
+   * ⛔ 수기 접수에서 이름만으로 여러 행이 걸리면 취소하지 않는다.
+   *    한 사람이 여러 과목을 신청해 두는 것이 흔해서(김형곤 = 의장 T. + 파운데이션 T.),
+   *    어느 쪽을 취소해 달라는 요청이었는지 시트만 봐서는 알 수 없다.
+   *    담당자가 `취소할 과목` 한 칸만 채우고 `처리결과` 를 비우면 그대로 처리된다.
+   */
+  if (manual && matched.length > 1 && !subjects.length) {
+    var cand = matched.map(function (x) { return x.title + ' - ' + x.name; }).join(' / ');
+    resp.getRange(row, C_RESULT).setValue(
+      '보류 — 이름만으로는 과목을 특정할 수 없습니다 (' + matched.length + '건: ' + cand + '). ' +
+      '`취소할 과목` 을 채우고 이 칸을 비우면 처리됩니다.');
+    notifySettlement_(
+      '[LTT] 수기 접수 건을 보류했습니다.\n' +
+      payer + '님 이름으로 신청 행이 ' + matched.length + '건입니다.\n' + cand + '\n\n' +
+      '응답 시트 ' + row + '행의 `취소할 과목` 을 채우고 `처리결과` 를 비워 주세요.');
+    return;
+  }
+
   if (!matched.length) {
     // 같은 주문 안에 후보는 있었는데 이름이 명단과 안 맞아 하나도 못 고른 경우를 구분해 준다.
     // 그냥 '매칭 실패' 라고만 적으면 담당자가 어디를 봐야 할지 알 수 없다.
     var why = notListed.length
       ? '이름이 \'취소할 수강자\' 와 달라 고르지 못함 (같은 주문 후보 ' + notListed.length + '건: ' + notListed.join(' / ') + ')'
-      : '수동 확인 필요';
+      : (manual
+          ? '수기 접수인데 \'' + payer + '\' 이름의 결제완료·미취소 행이 없습니다 (성명 표기 또는 이미 취소 여부를 확인해 주세요)'
+          : '수동 확인 필요');
     resp.getRange(row, C_RESULT).setValue('매칭 실패 — ' + why);
     notifySettlement_(
       '[LTT] 환불 처리했으나 신청 행을 찾지 못했습니다.\n' +
@@ -300,9 +335,12 @@ function processRefund_(row) {
   // 같은 주문이지만 명단에 없어 **그대로 둔** 행도 함께 적는다.
   // 안 한 일을 안 적으면 "왜 저 사람은 취소가 안 됐지" 를 아무도 모른 채 지나간다.
   var keptNote = notListed.length ? ' · 명단에 없어 그대로 둠 ' + notListed.length + '건 (' + notListed.join(' / ') + ')' : '';
-  resp.getRange(row, C_RESULT).setValue(stamp + ' 취소 ' + matched.length + '건 (' + summary + ')' + keptNote);
+  // 접수자 연락처가 없으면 접수자 통은 못 나간다(수기 접수에서 흔하다).
+  // 안 나간 것을 안 적으면 "왜 저 사람은 문자를 못 받았지" 를 아무도 모른다.
+  var payerNote = phone ? '' : ' · 접수자 연락처가 없어 접수자 안내는 건너뜀(수강자 안내는 발송)';
+  resp.getRange(row, C_RESULT).setValue(stamp + ' 취소 ' + matched.length + '건 (' + summary + ')' + keptNote + payerNote);
 
-  // 신청자 안내
+  // 신청자 안내 — 번호가 없으면 sendSms_ 가 false 를 돌려주고 그냥 넘어간다.
   sendSms_(phone,
     '[BNI Korea LT Training]\n' +
     payer + '님, 요청하신 취소·환불이 처리되었습니다.\n\n' +
