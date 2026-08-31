@@ -408,7 +408,9 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
                           {program.date} · 1인 {(program.price || 0).toLocaleString()}원
                         </p>
                         {program.isLiveAvailable === false && (
-                          <p className="text-xs text-gray-600 dark:text-gray-300">
+                          /* ⛔ 회색(text-gray-600 dark:text-gray-300)은 이 자주색 헤더에 묻혀
+                             안 읽힌다(2026-08-31 지적). 같은 칸의 '0명 · 0원' 과 같은 레드로 쓴다. */
+                          <p className="text-xs font-medium text-red-600">
                             실시간 참여 신청이 마감된 과목입니다. 명단 전원 녹화본 시청으로 접수됩니다.
                           </p>
                         )}
@@ -455,9 +457,11 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
                                 value={attendee.email}
                                 onChange={(e) => updateAttendee(program.title, attendee.id, { email: e.target.value })}
                               />
+                              {/* 마감된 과목이라도 셀렉트 자체는 살려 둔다 — 통째로 잠그면
+                                  고른 값(녹화본 시청)까지 흐려져 **VOD 도 안 된다**는 뜻으로 읽힌다.
+                                  개별 신청과 똑같이 **실시간 항목만** 못 고르게 한다. */}
                               <Select
                                 value={effectiveType(program, attendee)}
-                                disabled={program.isLiveAvailable === false}
                                 onValueChange={(value) =>
                                   updateAttendee(program.title, attendee.id, { participationType: value })
                                 }
@@ -466,7 +470,9 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="실시간 참여">실시간 참여</SelectItem>
+                                  <SelectItem value="실시간 참여" disabled={program.isLiveAvailable === false}>
+                                    실시간 참여{program.isLiveAvailable === false ? " (마감)" : ""}
+                                  </SelectItem>
                                   <SelectItem value="녹화본 시청">녹화본 시청</SelectItem>
                                 </SelectContent>
                               </Select>
