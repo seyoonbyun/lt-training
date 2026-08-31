@@ -1039,7 +1039,9 @@ export default function Home() {
                     && detailProgram.isAvailable
                     && !isApplicationClosed(detailProgram.title)
                     && detailProgram.isLiveAvailable === false && (
-                    <Badge variant="secondary">실시간 마감 · 녹화본 신청 가능</Badge>
+                    <span className="gold-shine inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold">
+                      <span>실시간 마감 · 녹화본 신청만 가능</span>
+                    </span>
                   )}
                 </div>
                 <DialogTitle className="text-xl leading-tight text-left">
