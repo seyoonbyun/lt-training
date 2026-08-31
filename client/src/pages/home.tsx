@@ -513,6 +513,12 @@ export default function Home() {
             <p className="text-xs">
               * 녹화본 영상이 업로드 되는대로, 참가 신청해주신 대표님들(한정)께 'VOD 열람비번'이 발송됩니다 :)
             </p>
+            {/* 녹화본으로 가는 길이 캘린더 박스 하나뿐이라, 그 사실을 글로 적어 둔다.
+                'VOD 시청' 배지만으로는 눌러야 한다는 걸 모른다(2026-08-31 지시). */}
+            <p className="text-xs font-medium text-red-600">
+              * 이미 진행된 트레이닝은 <strong>캘린더에서 해당 과목 박스를 클릭</strong>하신 뒤,
+              'VOD 열람비번'을 입력하시면 녹화본을 시청하실 수 있습니다.
+            </p>
           </div>
         </div>
 
@@ -636,7 +642,7 @@ export default function Home() {
                           }`}
                         >
                           <span className="md:hidden">{program.hasVod ? 'VOD' : '종료'}</span>
-                          <span className="hidden md:inline">{program.hasVod ? 'VOD 시청' : '교육 종료'}</span>
+                          <span className="hidden md:inline">{program.hasVod ? 'VOD 시청 ▸' : '교육 종료'}</span>
                         </span>
                       )}
                     </button>
