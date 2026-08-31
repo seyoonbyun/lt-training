@@ -88,7 +88,13 @@ function VodUnlock({ program }: { program: SecondaryProgram }) {
               onChange={(e) => { setPassword(e.target.value); setError(null); }}
               placeholder="열람 비밀번호"
               autoComplete="off"
-              className="min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm"
+              /*
+                ⛔ dark: 변형을 쓰면 안 된다 — 이 사이트는 <html class="dark"> 로 고정인데
+                   색 토큰은 밝은 값 한 벌뿐이라, dark:bg-gray-900 을 걸면 배경만 새까매지고
+                   글자는 검은색 그대로라 **입력한 값이 안 보인다**(2026-08-31 지적).
+                   화면 전체가 밝은 디자인이므로 흰 바탕·검은 글자로 못박는다.
+              */
+              className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 caret-red-600 tracking-[0.15em] focus:outline-none focus:ring-2 focus:ring-red-600/40"
             />
             <Button type="submit" size="sm" disabled={loading || !password.trim()} className="bg-red-600 hover:bg-red-700">
               {loading ? "확인 중…" : "시청하기"}
