@@ -18,6 +18,90 @@ import heroVideo from "@assets/team_1755249611475.mp4";
 import buildingImage from "@assets/화면 캡처 2025-08-11 232105_1754922103429.png";
 
 /**
+ * 녹화본(VOD) 열람 칸.
+ *
+ * 신청자에게 문자·메일로 안내한 **강의실 암호**를 맞혀야 영상 주소가 나온다.
+ * ⛔ 주소도 암호도 화면 코드에 없다 — 서버가 확인한 뒤에만 내려준다.
+ * ⭐ 새 창을 띄우고 **링크도 화면에 남긴다** (팝업 차단에 막히면 아무것도 안 남는다).
+ */
+function VodUnlock({ program }: { program: SecondaryProgram }) {
+  const [password, setPassword] = useState("");
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/vod/unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: program.title, password }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data?.message || "녹화본을 불러오지 못했습니다.");
+        return;
+      }
+      setUrl(data.url);
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch {
+      setError("연결에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20 p-3 space-y-2">
+      <div className="flex items-center gap-1.5 text-sm font-semibold text-red-600">
+        <Monitor className="w-4 h-4" />
+        녹화본(VOD) 시청
+      </div>
+
+      {url ? (
+        <>
+          <p className="text-xs text-muted-foreground">
+            새 창이 열리지 않았다면 아래 버튼을 눌러 주세요.
+          </p>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+          >
+            녹화본 보기
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">
+            신청하실 때 문자·이메일로 안내드린 <strong>열람 비밀번호</strong>를 입력하시면 영상으로 연결됩니다.
+          </p>
+          <form onSubmit={submit} className="flex gap-2">
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(null); }}
+              placeholder="열람 비밀번호"
+              autoComplete="off"
+              className="min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm"
+            />
+            <Button type="submit" size="sm" disabled={loading || !password.trim()} className="bg-red-600 hover:bg-red-700">
+              {loading ? "확인 중…" : "시청하기"}
+            </Button>
+          </form>
+          {error && <p className="text-xs font-medium text-destructive">{error}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * 안내 문자·메일 미리보기.
  *
  * 실제로 발송되는 본문과 같은 형태를 보여 주되, **값은 가린다** —
@@ -328,6 +412,15 @@ export default function Home() {
     return `${year}-${matched[1].padStart(2, '0')}-${matched[2].padStart(2, '0')}`;
   };
 
+  // 오늘(서울) 기준으로 이미 지난 과목인지.
+  // ⭐ 지난 과목이라고 캘린더에서 흐리게 만들지 않는다 — VOD 신청자가 이 칸을 눌러
+  //    녹화본을 보는 통로이기 때문이다. 신청서의 과목 목록에서만 빠진다.
+  const todaySeoul = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
+  const isPastProgram = (program: SecondaryProgram) => {
+    const ymd = seoulYmd(program);
+    return !!ymd && ymd < todaySeoul;
+  };
+
   const sessionsByDate = new Map<string, SecondaryProgram[]>();
   programs.forEach((program) => {
     const key = seoulYmd(program);
@@ -485,7 +578,9 @@ export default function Home() {
               <div className="flex flex-1 flex-col gap-1 min-h-0">
                 {daySessions.map((program) => {
                   const isOffline = program.format === '오프라인';
-                  const closed = !program.isAvailable || isApplicationClosed(program.title);
+                  const past = isPastProgram(program);
+                  // 지난 과목은 흐리게 하지 않는다(VOD 통로). 아직 안 온 과목을 닫았을 때만 흐리게.
+                  const closed = !past && (!program.isAvailable || isApplicationClosed(program.title));
 
                   return (
                     <button
@@ -631,6 +726,10 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* 녹화본이 올라온 과목이면 여기서 바로 본다. 지난 과목의 캘린더 칸이
+          VOD 신청자에게는 이 통로다 — 그래서 지난 과목도 캘린더에 그대로 남긴다. */}
+      {program.hasVod && <VodUnlock key={program.id} program={program} />}
 
       {/* 설명 */}
       {program.description ? (
@@ -887,15 +986,28 @@ export default function Home() {
                   </Badge>
                   <Badge
                     variant={
-                      detailProgram.isAvailable && !isApplicationClosed(detailProgram.title)
+                      !isPastProgram(detailProgram)
+                        && detailProgram.isAvailable
+                        && !isApplicationClosed(detailProgram.title)
                         ? 'default'
                         : 'secondary'
                     }
                   >
-                    {detailProgram.isAvailable && !isApplicationClosed(detailProgram.title)
-                      ? '신청가능'
-                      : '신청마감'}
+                    {/* 지난 과목에 "신청마감" 만 띄우면 녹화본을 보러 온 분이 돌아간다 */}
+                    {isPastProgram(detailProgram)
+                      ? (detailProgram.hasVod ? '교육 종료 · 녹화본 시청 가능' : '교육 종료')
+                      : detailProgram.isAvailable && !isApplicationClosed(detailProgram.title)
+                        ? '신청가능'
+                        : '신청마감'}
                   </Badge>
+                  {/* 실시간만 마감된 과목. "마감" 한 마디로 끝내면 녹화본으로는
+                      신청할 수 있다는 걸 모른 채 돌아간다. */}
+                  {!isPastProgram(detailProgram)
+                    && detailProgram.isAvailable
+                    && !isApplicationClosed(detailProgram.title)
+                    && detailProgram.isLiveAvailable === false && (
+                    <Badge variant="secondary">실시간 마감 · 녹화본 신청 가능</Badge>
+                  )}
                 </div>
                 <DialogTitle className="text-xl leading-tight text-left">
                   {detailProgram.title}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -63,6 +63,8 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
 
   const selectablePrograms = programs.filter((program) => program.isAvailable);
   const selectedPrograms = selectablePrograms.filter((program) => selectedTitles.includes(program.title));
+  // 실시간 참여만 마감된 과목 (세션등록 N열). 녹화본 신청은 계속 받는다.
+  const liveClosedSelected = selectedPrograms.filter((program) => program.isLiveAvailable === false);
   const totalAmount = selectedPrograms.reduce((sum, program) => sum + (program.price || 0), 0);
   const allSelected =
     selectablePrograms.length > 0 && selectedPrograms.length === selectablePrograms.length;
@@ -91,6 +93,15 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
       notes: "",
     },
   });
+
+  // 실시간이 마감된 과목을 고르면 참여 방식을 녹화본으로 되돌린다.
+  // 라디오가 눈에 보이게 움직이고 바로 아래에 이유가 적히므로 조용한 변경이 아니다 —
+  // 그냥 두면 '실시간'인 채로 제출돼 서버에서 튕긴다.
+  useEffect(() => {
+    if (liveClosedSelected.length > 0 && form.getValues("participationType") === "실시간 참여") {
+      form.setValue("participationType", "녹화본 시청");
+    }
+  }, [liveClosedSelected.length, form]);
 
   const submitMutation = useMutation({
     mutationFn: async (data: ApplicationFormData) => {
@@ -149,6 +160,13 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
   const onSubmit = async (data: ApplicationFormData) => {
     if (selectedPrograms.length === 0) {
       setSessionError("신청하실 과목을 하나 이상 선택해주세요");
+      return;
+    }
+    // 실시간이 마감된 과목은 실시간으로 접수되지 않는다 (서버도 같은 이유로 튕긴다).
+    if (data.participationType === "실시간 참여" && liveClosedSelected.length > 0) {
+      setSessionError(
+        `${liveClosedSelected.map((p) => p.title.replace(/^LTT\s*:\s*/, "")).join(", ")} 은(는) 실시간 참여 신청이 마감되었습니다. 녹화본 시청으로 신청하시거나 해당 과목의 선택을 해제해 주세요.`
+      );
       return;
     }
     setIsSubmitting(true);
@@ -235,6 +253,11 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
                           <span className="block text-xs text-red-600">
                             {(program.price || 0).toLocaleString()}원
                           </span>
+                          {program.isLiveAvailable === false && (
+                            <span className="mt-1 inline-block rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-600 dark:text-gray-300">
+                              실시간 마감 · 녹화본만 신청 가능
+                            </span>
+                          )}
                         </span>
                       </button>
                     );
@@ -409,12 +432,17 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
                     <FormControl>
                       <RadioGroup
                         onValueChange={field.onChange}
-                        defaultValue={field.value}
+                        value={field.value}
                         className="flex flex-col space-y-1"
                       >
                         <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="실시간 참여" id="live" />
-                          <Label htmlFor="live">실시간 참여</Label>
+                          <RadioGroupItem value="실시간 참여" id="live" disabled={liveClosedSelected.length > 0} />
+                          <Label
+                            htmlFor="live"
+                            className={liveClosedSelected.length > 0 ? "text-muted-foreground" : undefined}
+                          >
+                            실시간 참여
+                          </Label>
                         </div>
                         <div className="flex items-center space-x-2">
                           <RadioGroupItem value="녹화본 시청" id="recorded" />
@@ -422,6 +450,15 @@ export function ApplicationForm({ programs, initialTitles = [], onSuccess }: App
                         </div>
                       </RadioGroup>
                     </FormControl>
+                    {/* 왜 못 고르는지와, 그래도 신청할 방법을 같이 적는다.
+                        "마감"만 보이면 신청할 길이 없는 줄 알고 돌아간다. */}
+                    {liveClosedSelected.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {liveClosedSelected.map((p) => p.title.replace(/^LTT\s*:\s*/, "")).join(", ")} 은(는)
+                        실시간 참여 신청이 마감되었습니다. 녹화본 시청으로는 그대로 신청하실 수 있고,
+                        실시간으로 신청하시려면 위에서 해당 과목의 선택을 해제해 주세요.
+                      </p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}

@@ -149,6 +149,12 @@ export interface SecondaryProgram {
   currentParticipants: number;
   maxParticipants: number;
   isAvailable: boolean;
+  /**
+   * 실시간 참여 신청만 따로 마감했는지 (세션등록 N열 '마감').
+   * 강의 당일이 다가와 현장·줌 명단을 확정한 뒤에도 녹화본(VOD) 신청은 계속 받는다.
+   * `isAvailable`(K열)이 과목 전체를 닫는 것과 다르다.
+   */
+  isLiveAvailable: boolean;
   trainer: string;
   trainingType: string;
   storeUrl?: string;
@@ -159,7 +165,9 @@ export interface SecondaryProgram {
   notionUrl?: string; // Notion 링크
   classroomUrl?: string; // 온라인 강의실 URL (I열)
   zoomUrl?: string; // 실시간(줌) 링크 (J열). 오프라인 과목은 비어 있다
-  classroomPw?: string; // VOD 열람비번 (M열, 선택)
+  classroomPw?: string; // VOD 열람비번 (M열). ⛔ 공개 API 응답에서는 뺀다
+  /** 녹화본이 올라와 있는지. 실제 주소(O열)는 비번을 맞혀야 서버가 내려준다 */
+  hasVod?: boolean;
   venueText?: string; // 오프라인 장소 원문 (H열, '표기 + URL' 형태를 허용)
   venueUrl?: string; // 오프라인 강의실 URL (H열)
   format?: string; // '오프라인' | '온라인' — H열(오프라인 장소) 유무로 서버가 판정

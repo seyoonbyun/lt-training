@@ -77,7 +77,9 @@ async function api(path: string, init?: RequestInit) {
       `=COUNTIFS(${q("B")},$A${r},${q("J")},"완료",${q("R")},"",${q("H")},"*실시간*")`,
       `=$G${r}-$J${r}`,
       `=$G${r}*$E${r}`,
-      p.isAvailable ? "" : "마감",
+      // 전체 마감(K열)과 실시간만 마감(N열)을 갈라서 적는다 — 오피스가 이 탭만 보고
+      // "닫혔다"고 답하면 녹화본 신청을 놓친다.
+      !p.isAvailable ? "마감" : (p.isLiveAvailable === false ? "실시간 마감" : ""),
     ]);
   });
 

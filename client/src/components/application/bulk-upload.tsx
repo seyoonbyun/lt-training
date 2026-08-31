@@ -54,6 +54,14 @@ const newAttendee = (): Attendee => ({
 /** 이름이 있어야 한 사람으로 센다. 연락처·이메일은 선택값이다 */
 const isBlank = (attendee: Attendee) => !attendee.name.trim();
 
+/**
+ * 실제로 접수될 참여 방식. 과목의 실시간 참여가 마감됐으면(세션등록 N열)
+ * 무조건 녹화본이다 — 화면·검증·전송이 **같은 함수**를 보게 해서
+ * "화면엔 실시간인데 서버가 튕긴다" 는 어긋남을 막는다.
+ */
+const effectiveType = (program: SecondaryProgram, attendee: Attendee) =>
+  program.isLiveAvailable === false ? "녹화본 시청" : attendee.participationType;
+
 export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
   const [selectedTitles, setSelectedTitles] = useState<string[]>([]);
   const [rosters, setRosters] = useState<Record<string, Attendee[]>>({});
@@ -216,9 +224,9 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
           name: attendee.name.trim(),
           phone: attendee.phone.trim(),
           email: attendee.email.trim(),
-          participationType: attendee.participationType,
+          participationType: effectiveType(program, attendee),
           notes: "",
-          trainingType: attendee.participationType.includes("실시간") ? "live" : "recorded",
+          trainingType: effectiveType(program, attendee).includes("실시간") ? "live" : "recorded",
         });
       });
     });
@@ -399,6 +407,11 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
                         <p className="text-xs text-muted-foreground">
                           {program.date} · 1인 {(program.price || 0).toLocaleString()}원
                         </p>
+                        {program.isLiveAvailable === false && (
+                          <p className="text-xs text-gray-600 dark:text-gray-300">
+                            실시간 참여 신청이 마감된 과목입니다. 명단 전원 녹화본 시청으로 접수됩니다.
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         {programIndex > 0 && (
@@ -443,7 +456,8 @@ export function BulkUpload({ programs, onSuccess }: BulkUploadProps) {
                                 onChange={(e) => updateAttendee(program.title, attendee.id, { email: e.target.value })}
                               />
                               <Select
-                                value={attendee.participationType}
+                                value={effectiveType(program, attendee)}
+                                disabled={program.isLiveAvailable === false}
                                 onValueChange={(value) =>
                                   updateAttendee(program.title, attendee.id, { participationType: value })
                                 }

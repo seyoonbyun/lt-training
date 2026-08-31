@@ -216,7 +216,13 @@ export class GoogleSheetsService {
     }
   }
 
-  async fetchApplicationStatus(): Promise<{ [title: string]: boolean }> {
+  /**
+   * 마감 상태 두 가지를 한 번에 읽는다.
+   *   open — K열 '마감' 이면 과목 전체(실시간·녹화본 모두) 신청 불가
+   *   live — N열 '마감' 이면 **실시간 참여만** 불가하고 녹화본(VOD)은 계속 받는다
+   * 두 열이 한 시트 한 행에 있으므로 요청도 한 번만 한다.
+   */
+  private async fetchStatusMaps(): Promise<{ open: { [title: string]: boolean }; live: { [title: string]: boolean } }> {
     const cacheKey = 'applicationStatus';
     // 마감 상태는 15초 캐시 (어드민 변경 빠르게 반영)
     const cached = this.cache.get(cacheKey);
@@ -224,60 +230,79 @@ export class GoogleSheetsService {
       return cached.data;
     }
 
+    const empty = { open: {}, live: {} };
+
     if (!this.secondarySpreadsheetId) {
       console.error('❌ fetchApplicationStatus: secondarySpreadsheetId가 비어있습니다');
-      return {};
+      return empty;
     }
-    
+
     try {
       // getSecondarySheetPrograms()와 동일한 URL 패턴 사용 (인코딩 없이)
-      const url = `${this.baseUrl}/${this.secondarySpreadsheetId}/values/'LTT 세션등록'!D:K?key=${this.apiKey}`;
+      const url = `${this.baseUrl}/${this.secondarySpreadsheetId}/values/'LTT 세션등록'!D:N?key=${this.apiKey}`;
       console.log('📋 fetchApplicationStatus 호출:', url.replace(this.apiKey || '', '***'));
       const response = await fetch(url);
-      
+
       if (!response.ok) {
         const errText = await response.text();
         console.error('❌ fetchApplicationStatus API 오류:', response.status, errText);
-        return {};
+        return empty;
       }
-      
+
       const data = await response.json();
       const rows = data.values || [];
       console.log(`📋 fetchApplicationStatus: ${rows.length}행 조회됨`);
-      
+
       if (rows.length < 3) {
         console.warn('⚠ fetchApplicationStatus: 데이터 행이 부족합니다 (rows:', rows.length, ')');
-        return {};
+        return empty;
       }
-      
+
       const applicationStatus: { [title: string]: boolean } = {};
-      
+      const liveStatus: { [title: string]: boolean } = {};
+
       // 데이터 행은 index 2부터 시작 (헤더 2행)
-      // D:K 범위이므로 D=index 0, K=index 7
+      // D:N 범위이므로 D=index 0, K=index 7, N=index 10
       for (let i = 2; i < rows.length; i++) {
         const row = rows[i];
         if (!row || !row[0]) continue;
-        
+
         const title = String(row[0]).trim(); // D열 (범위 시작이 D이므로 index 0)
         const deadlineStatus = row[7] ? String(row[7]).trim() : ''; // K열 (D부터 7번째 = index 7)
-        
+        const liveDeadlineStatus = row[10] ? String(row[10]).trim() : ''; // N열 (실시간만 마감)
+
         if (title) {
           const isOpen = deadlineStatus !== '마감';
           applicationStatus[title] = isOpen;
+          // 과목이 통째로 닫혔으면 실시간도 당연히 닫힌 것이다.
+          liveStatus[title] = isOpen && liveDeadlineStatus !== '마감';
           if (!isOpen) {
             console.log(`🔒 마감 처리됨: "${title}" (K열값: "${deadlineStatus}")`);
+          } else if (!liveStatus[title]) {
+            console.log(`🔒 실시간만 마감: "${title}" (N열값: "${liveDeadlineStatus}") — 녹화본은 계속 접수`);
           }
         }
       }
-      
+
       console.log('📋 fetchApplicationStatus 결과:', JSON.stringify(applicationStatus));
-      this.setCachedData(cacheKey, applicationStatus);
-      return applicationStatus;
-      
+      const maps = { open: applicationStatus, live: liveStatus };
+      this.setCachedData(cacheKey, maps);
+      return maps;
+
     } catch (error) {
       console.error('❌ fetchApplicationStatus 에러:', error);
-      return {};
+      return empty;
     }
+  }
+
+  /** K열 기준 과목 전체 신청 가능 여부 */
+  async fetchApplicationStatus(): Promise<{ [title: string]: boolean }> {
+    return (await this.fetchStatusMaps()).open;
+  }
+
+  /** N열 기준 **실시간 참여** 신청 가능 여부. K열이 닫혔으면 이것도 false */
+  async fetchLiveApplicationStatus(): Promise<{ [title: string]: boolean }> {
+    return (await this.fetchStatusMaps()).live;
   }
 
   getSheetInfo(): { primary: string; secondary?: string } {
@@ -1249,6 +1274,10 @@ export class GoogleSheetsService {
         const deadlineStatus = row[10] ? String(row[10]).trim() : '';
         const isClosed = deadlineStatus === '마감';
 
+        // N열(index 13): '마감' 이면 **실시간 참여만** 막고 녹화본(VOD)은 계속 받는다.
+        const liveDeadlineStatus = row[13] ? String(row[13]).trim() : '';
+        const isLiveClosed = liveDeadlineStatus === '마감';
+
         // L열(index 11): 결제 금액(원). 어드민이 시트에서 직접 관리한다.
         const price = parseInt(String(row[11] ?? '').replace(/[^0-9]/g, ''), 10) || 0;
 
@@ -1264,6 +1293,7 @@ export class GoogleSheetsService {
           price,
           format: venueLink ? '오프라인' : '온라인',
           isAvailable: !isClosed,
+          isLiveAvailable: !isClosed && !isLiveClosed,
           maxParticipants: 50,
           currentParticipants: 0,
           formattedDate: this.parseKoreanDate(row[1], row[2]),
@@ -1275,6 +1305,9 @@ export class GoogleSheetsService {
           zoomUrl: String(row[9] || ''),
           // M열(index 12): VOD 열람비번. 비어 있으면 문자에서 그 줄이 빠진다.
           classroomPw: String(row[12] || '').trim(),
+          // O열(index 14): 녹화본 영상 주소. **공개 응답에 실으면 안 된다** —
+          // 강의실 암호를 맞힌 사람에게만 서버가 따로 내려준다.
+          vodUrl: String(row[14] || '').trim(),
           venueText: String(venueLink || ''),
           notionUrl: this.getNotionLink(title)
         };

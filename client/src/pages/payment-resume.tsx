@@ -24,6 +24,8 @@ interface ResumeItem {
   listPrice?: number;
   /** 교육비 지원 대상이라 금액이 깎인 건 */
   sponsored?: boolean;
+  /** 그 과목의 실시간 참여 신청이 마감됐다. 결제는 되고, 실시간으로 **바꾸는 것만** 막힌다 */
+  liveClosed?: boolean;
 }
 
 interface ResumeSummary {
@@ -262,7 +264,17 @@ export default function PaymentResume() {
                             <button
                               key={type}
                               type="button"
-                              disabled={savingRow === item.row}
+                              // 실시간이 마감된 과목은 실시간으로 되돌릴 수 없다.
+                              // 이미 실시간으로 신청하신 분의 결제는 그대로 진행된다.
+                              disabled={
+                                savingRow === item.row ||
+                                (type === LIVE && !!item.liveClosed && item.participationType !== LIVE)
+                              }
+                              title={
+                                type === LIVE && item.liveClosed
+                                  ? "실시간 참여 신청이 마감된 과목입니다"
+                                  : undefined
+                              }
                               onClick={() => {
                                 if (item.participationType !== type) changeType(item.row, type);
                               }}

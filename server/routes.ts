@@ -40,6 +40,19 @@ async function sendEnrollmentSms(order: PendingOrder) {
 const FREE_METHOD = "지원(0원)";
 
 /**
+ * 그 과목의 **실시간 참여 신청**이 마감됐는지 (세션등록 N열).
+ * 시트를 15초마다 다시 읽는 상태 맵이 정본이고, 거기 과목이 없을 때만
+ * 과목 캐시(2.5분)의 값을 쓴다 — 마감 지시가 늦게 먹히면 안 된다.
+ *
+ * ⭐ 녹화본(VOD) 신청은 그대로 열려 있다. 여기서 막는 건 실시간 참여 하나뿐이다.
+ */
+function isLiveClosed(program: any, liveStatus: { [title: string]: boolean }): boolean {
+  const fresh = liveStatus[program?.title];
+  if (typeof fresh === "boolean") return !fresh;
+  return program?.isLiveAvailable === false;
+}
+
+/**
  * 승인된 주문을 신청명단에 기록한다 (J열 `완료` + 주문번호·결제키·결제수단·승인일시).
  *
  * ⛔ 유료 결제와 0원 지원이 **같은 함수를 쓴다.** 갈래를 나누면 한쪽만 고쳐지고,
@@ -238,6 +251,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * 녹화본(VOD) 열람. 신청자에게 문자·메일로 안내한 **강의실 암호**(세션등록 M열)를
+   * 맞혀야 영상 주소(O열)를 내려준다.
+   *
+   * ⛔ 주소도 암호도 목록 API 에 실지 않는다 — 공개 페이지라 그대로 읽힌다.
+   * ⭐ 실패 사유를 "암호가 다릅니다" 하나로 합치지 않는다. 아직 녹화본이 없는 과목과
+   *    암호를 틀린 경우는 신청자가 해야 할 일이 다르다.
+   */
+  app.post("/api/vod/unlock", applicationSubmitRateLimit, async (req, res) => {
+    try {
+      const title = String(req.body?.title || "").trim();
+      const password = String(req.body?.password || "").trim();
+
+      if (!title) return res.status(400).json({ message: "과목이 지정되지 않았습니다." });
+      if (!password) return res.status(400).json({ message: "열람 비밀번호를 입력해 주세요." });
+
+      const programs = await googleSheetsService.getSecondarySheetPrograms();
+      const program = programs.find((p: any) => p.title === title);
+      if (!program) return res.status(404).json({ message: "존재하지 않는 과목입니다." });
+
+      const url = String(program.vodUrl || "").trim();
+      if (!url) {
+        return res.status(404).json({ message: "아직 녹화본이 올라오지 않았습니다. 업로드 후 이 화면에서 바로 보실 수 있습니다." });
+      }
+
+      const expected = String(program.classroomPw || "").trim();
+      if (!expected) {
+        console.error("❌ VOD 열람 암호 미설정:", title);
+        return res.status(503).json({ message: "열람 비밀번호가 아직 설정되지 않았습니다. 내셔널 오피스로 문의해 주세요." });
+      }
+
+      // 대소문자·앞뒤 공백은 봐준다. 문자로 받은 값을 손으로 옮겨 적는 분들이라
+      // 여기서 깐깐하게 굴면 맞는 암호를 넣고도 못 본다.
+      if (password.toUpperCase() !== expected.toUpperCase()) {
+        return res.status(401).json({ message: "열람 비밀번호가 맞지 않습니다. 결제 완료 안내 문자·이메일을 확인해 주세요." });
+      }
+
+      res.json({ url });
+    } catch (error) {
+      console.error("VOD 열람 실패:", error);
+      res.status(500).json({ message: "녹화본을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요." });
+    }
+  });
+
   // Get all notices
   app.get("/api/notices", async (req, res) => {
     try {
@@ -332,6 +389,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const programs = await googleSheetsService.getSecondarySheetPrograms();
+      // 실시간 마감(N열)은 과목 캐시(2.5분)보다 빨리 반영돼야 한다 — 15초 캐시를 따로 읽는다.
+      const liveStatus = await googleSheetsService.fetchLiveApplicationStatus();
+      const wantsLive = String(req.body?.trainingType || "").trim() === "live"
+        || String(req.body?.participationType || "").includes("실시간");
+      const liveClosedTitles: string[] = [];
       const selected: any[] = [];
 
       for (const title of titles) {
@@ -342,11 +404,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!program.isAvailable) {
           return res.status(409).json({ message: `마감된 과목입니다: ${title}` });
         }
+        // 실시간 참여만 마감된 과목. 접수는 막되 **녹화본으로는 신청된다는 것까지** 알려준다
+        // (그냥 "마감"이라고만 하면 신청할 방법이 없는 줄 알고 돌아간다).
+        if (wantsLive && isLiveClosed(program, liveStatus)) {
+          liveClosedTitles.push(title);
+        }
         if (!program.price || program.price <= 0) {
           console.error("❌ 금액 미설정:", title);
           return res.status(503).json({ message: `결제 금액이 설정되지 않은 과목입니다: ${title}` });
         }
         selected.push(program);
+      }
+
+      if (liveClosedTitles.length > 0) {
+        return res.status(409).json({
+          message: `실시간 참여 신청이 마감된 과목입니다: ${liveClosedTitles.join(", ")}. 녹화본 시청으로는 신청하실 수 있습니다.`,
+          liveClosed: true,
+          liveClosedTitles,
+        });
       }
 
       // 과목별로 신청 데이터를 만들어 검증한다. 신청자 정보는 한 벌을 공유한다.
@@ -552,6 +627,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "신청할 과목이 지정되지 않았습니다." });
       }
 
+      // 실시간 마감(N열)은 과목 캐시(2.5분)보다 빨리 반영돼야 한다 — 15초 캐시를 따로 읽는다.
+      const liveStatus = await googleSheetsService.fetchLiveApplicationStatus();
+      const liveClosedByTitle = new Set<string>();
+
       const priceByTitle = new Map<string, number>();
       for (const title of requestedTitles) {
         const program = programs.find((p: any) => p.title === title);
@@ -561,11 +640,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!program.isAvailable) {
           return res.status(409).json({ message: `마감된 과목입니다: ${title}` });
         }
+        if (isLiveClosed(program, liveStatus)) liveClosedByTitle.add(title);
         if (!program.price || program.price <= 0) {
           console.error("❌ 금액 미설정:", title);
           return res.status(503).json({ message: `결제 금액이 설정되지 않은 과목입니다: ${title}` });
         }
         priceByTitle.set(title, program.price);
+      }
+
+      // 실시간이 마감된 과목을 실시간으로 올린 사람만 골라 되돌려준다.
+      // 명단 전체를 튕기되 **누구를 고쳐야 하는지**까지 말해 준다 — 15명 명단에서
+      // "마감입니다" 한 줄만 받으면 어느 줄이 문제인지 알 수 없다.
+      if (liveClosedByTitle.size > 0) {
+        const liveClosedNames = applications
+          .filter((app: any) => {
+            const title = String(app.programTitle || "").trim();
+            if (!liveClosedByTitle.has(title)) return false;
+            const type = String(app.participationType || "").trim();
+            const training = String(app.trainingType || "").trim();
+            return type ? type.includes("실시간") : training !== "recorded";
+          })
+          .map((app: any) => `${String(app.name || "").trim()}(${String(app.programTitle || "").replace(/^LTT\s*:\s*/, "")})`);
+
+        if (liveClosedNames.length > 0) {
+          return res.status(409).json({
+            message: `실시간 참여 신청이 마감된 과목입니다: ${liveClosedNames.join(", ")}. 녹화본 시청으로 바꾸시면 그대로 신청됩니다.`,
+            liveClosed: true,
+            liveClosedNames,
+          });
+        }
       }
 
       // 이미 신청된 (사람, 과목)은 빼고 접수한다. 결제 금액도 그만큼 줄어든다.
@@ -785,8 +888,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const rowMap = await googleSheetsService.getApplicationRowsByNumbers(payload.rows);
     const programs = await googleSheetsService.getSecondarySheetPrograms();
+    const liveStatus = await googleSheetsService.fetchLiveApplicationStatus();
 
-    const items: Array<{ row: number; title: string; name: string; phone: string; email: string; region: string; chapter: string; participationType: string; price: number; listPrice?: number; notes?: string; sponsorNote?: string }> = [];
+    const items: Array<{ row: number; title: string; name: string; phone: string; email: string; region: string; chapter: string; participationType: string; price: number; listPrice?: number; notes?: string; sponsorNote?: string; liveClosed?: boolean }> = [];
     const alreadyPaid: string[] = [];
     const closed: string[] = [];
     // 취소·환불된 행. **결제된 것과 같이 묶지 않는다** — 환불받은 분에게 "이미 결제가
@@ -835,6 +939,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // I열 표기를 덧붙일 때 신청자가 쓴 내용을 지우지 않으려고 원문을 들고 간다.
         notes: String(row[idx("특이사항 & 문의")] || "").trim(),
         price: program.price,
+        // 실시간이 마감된 과목. 결제는 그대로 되고(이미 신청한 분이다), 화면에서
+        // 실시간으로 **바꾸는 것만** 막는다.
+        liveClosed: isLiveClosed(program, liveStatus),
       });
     }
 
@@ -879,6 +986,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         items: items.map((i: any) => ({
           row: i.row, name: i.name, title: i.title,
           participationType: i.participationType, price: i.price,
+          liveClosed: !!i.liveClosed,
           listPrice: i.listPrice ?? i.price,
           sponsored: (i.listPrice ?? i.price) > i.price,
         })),
@@ -1016,6 +1124,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const target = rowMap.get(row);
       if (!target || !googleSheetsService.isRowPayable(target)) {
         return res.status(409).json({ message: "이미 결제되었거나 취소된 신청입니다." });
+      }
+
+      // 실시간이 마감된 과목으로는 되돌릴 수 없다. 녹화본으로 바꾸는 건 언제나 된다.
+      if (participationType === "실시간 참여") {
+        const title = String(target[1] || "").trim();
+        const programs = await googleSheetsService.getSecondarySheetPrograms();
+        const liveStatus = await googleSheetsService.fetchLiveApplicationStatus();
+        const program = programs.find((p: any) => p.title === title);
+        if (isLiveClosed(program, liveStatus)) {
+          return res.status(409).json({
+            message: `${title.replace(/^LTT\s*:\s*/, "")} 은(는) 실시간 참여 신청이 마감되었습니다. 녹화본 시청으로 결제해 주세요.`,
+          });
+        }
       }
 
       await googleSheetsService.updateParticipationType(row, participationType);
@@ -1369,6 +1490,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // 신청 상태 조회 (K열의 "마감" 상태)
       const applicationStatus = await googleSheetsService.fetchApplicationStatus();
+      // 실시간 참여만 마감된 과목 (N열). 녹화본 신청은 계속 열려 있다.
+      const liveStatus = await googleSheetsService.fetchLiveApplicationStatus();
       console.log('🔍 /api/secondary-programs applicationStatus:', JSON.stringify(applicationStatus));
 
       // 프로그램에 결제완료 신청자 수와 신청 상태 추가
@@ -1467,11 +1590,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           completedCount += additionalCount;
         }
         
+        // ⛔ 강의실 암호(M열)와 녹화본 주소(O열)는 **공개 응답에서 뺀다.**
+        //    여기는 로그인 없는 페이지라 내려보내는 순간 개발자도구에서 그대로 읽힌다.
+        //    녹화본은 /api/vod/unlock 이 암호를 확인한 뒤에만 주소를 내려준다.
+        const { classroomPw, vodUrl, ...publicFields } = program as any;
+
         return {
-          ...program,
+          ...publicFields,
           completedCount: completedCount,
           currentParticipants: completedCount, // 프로그램 카드에서 사용하는 필드명과 통일
-          isAvailable: (program.title in applicationStatus) ? applicationStatus[program.title] : program.isAvailable // K열 마감 상태 우선, 없으면 기본값 사용
+          isAvailable: (program.title in applicationStatus) ? applicationStatus[program.title] : program.isAvailable, // K열 마감 상태 우선, 없으면 기본값 사용
+          isLiveAvailable: (program.title in liveStatus) ? liveStatus[program.title] : program.isLiveAvailable, // N열 실시간 마감 우선
+          hasVod: !!vodUrl // 주소는 감추고 "있다"는 사실만 알린다
         };
       });
       
