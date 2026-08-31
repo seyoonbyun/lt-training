@@ -640,8 +640,8 @@ export default function Home() {
                           className={`mt-0.5 inline-block rounded px-1 py-px text-[8px] md:text-[10px] font-bold leading-tight ${
                             program.hasVod
                               // 골드는 빨간 칸·흰 칸 어디에 놓여도 같은 색으로 읽힌다.
-                              // 글자는 짙은 갈색이라야 금색 위에서 또렷하다(흰 글자는 뭉갠다).
-                              ? 'bg-[#D4AF37] text-[#3B2F00]'
+                              // 금속 질감·반짝임은 index.css 의 .gold-shine 한 곳에 모아 뒀다.
+                              ? 'gold-shine'
                               : isOffline ? 'bg-white/25 text-white' : 'bg-red-600/10 text-red-600'
                           }`}
                         >

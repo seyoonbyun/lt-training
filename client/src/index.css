@@ -146,3 +146,52 @@ body {
     font-family: var(--font-inter);
   }
 }
+/*
+  캘린더 칸의 'VOD 시청' 태그 — 금속 골드 + 하이라이트가 주기적으로 훑고 지나간다.
+  ⭐ 글자는 짙은 갈색이라야 금색 위에서 또렷하다(흰 글자는 뭉갠다).
+  ⚠ 움직임을 줄이도록 설정한 분에게는 반짝임을 끈다 — 깜빡임에 민감한 분이 있다.
+*/
+.gold-shine {
+  position: relative;
+  overflow: hidden;
+  color: #3B2F00;
+  background-image: linear-gradient(
+    135deg,
+    #B8860B 0%,
+    #E9C767 25%,
+    #FFF6D0 45%,
+    #E9C767 65%,
+    #B8860B 100%
+  );
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+/* 글자가 하이라이트에 묻히지 않도록 한 겹 위에 둔다 */
+.gold-shine > span {
+  position: relative;
+  z-index: 1;
+}
+
+.gold-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    120deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.85) 50%,
+    transparent 65%
+  );
+  transform: translateX(-130%);
+  animation: gold-sweep 2.8s ease-in-out infinite;
+}
+
+@keyframes gold-sweep {
+  0%, 55% { transform: translateX(-130%); }
+  100% { transform: translateX(130%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gold-shine::after { animation: none; opacity: 0; }
+}
