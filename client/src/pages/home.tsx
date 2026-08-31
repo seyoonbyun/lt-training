@@ -708,7 +708,9 @@ export default function Home() {
             <div>1차: 오프라인 현장 강의</div>
             <div className="flex items-center gap-1 flex-wrap">
               <span>2차:</span>
-              {program.classroomUrl ? (
+              {/* 녹화본이 올라온 과목은 링크를 걸지 않는다 — 바로 아래 VOD 칸이 통로다.
+                  두 군데로 갈리면 비번 없이 들어갔다가 못 보고 돌아간다. */}
+              {program.classroomUrl && !program.hasVod ? (
                 <a
                   href={program.classroomUrl}
                   target="_blank"
