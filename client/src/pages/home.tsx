@@ -624,6 +624,21 @@ export default function Home() {
                           {program.instructor}
                         </span>
                       )}
+                      {/*
+                        지난 과목은 칸 모양이 다가올 과목과 똑같아 혼란스럽다(2026-08-31 지적).
+                        흐리게 만드는 대신 **여기가 녹화본 통로**라고 적는다.
+                        모바일은 칸이 40~50px 뿐이라 `VOD` 세 글자만 쓴다.
+                      */}
+                      {past && (
+                        <span
+                          className={`mt-0.5 inline-block rounded px-1 py-px text-[8px] md:text-[10px] font-bold leading-tight ${
+                            isOffline ? 'bg-white/25 text-white' : 'bg-red-600/10 text-red-600'
+                          }`}
+                        >
+                          <span className="md:hidden">{program.hasVod ? 'VOD' : '종료'}</span>
+                          <span className="hidden md:inline">{program.hasVod ? 'VOD 시청' : '교육 종료'}</span>
+                        </span>
+                      )}
                     </button>
                   );
                 })}
