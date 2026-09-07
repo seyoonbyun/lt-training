@@ -2,8 +2,12 @@
  * 참여 안내 발송 — 문자와 이메일을 같은 내용으로 함께 보낸다.
  *
  * 쓰이는 곳이 둘이다.
- *   1) 결제 승인 직후            (kind: 'confirm')  — routes.ts
- *   2) 트레이닝 당일 오전 10시    (kind: 'reminder') — reminder.ts
+ *   1) 결제 승인 직후             (kind: 'confirm')      — routes.ts
+ *   2) 트레이닝 전날 오후 3시     (kind: 'reminder-eve') — reminder.ts
+ *   3) 트레이닝 당일 오전 10시    (kind: 'reminder')     — reminder.ts
+ *
+ * ⛔ 2)를 8/23 에 추가하고 이 목록도, `NoticeKind` 도 안 늘려서 전날 안내가
+ *    "오늘 교육이 진행됩니다" 로 나갔다(2026-09-07, 문자 140건 + 메일).
  *
  * ⛔ 여기서 던지는 예외가 결제 승인 응답을 막으면 안 된다. 전부 잡아 로그만 남긴다.
  */
