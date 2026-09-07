@@ -152,7 +152,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   /**
    * 안내 메일 미리보기 (개발용). 실제 발송은 하지 않는다.
-   *   /api/dev/notice-preview?title=<과목명>&type=live|recorded&kind=confirm|reminder
+   *   /api/dev/notice-preview?title=<과목명>&type=live|recorded&kind=confirm|reminder|reminder-eve
    * 운영에서는 열리지 않는다.
    */
   app.get("/api/dev/notice-preview", async (req, res) => {
@@ -160,11 +160,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { loadProgramMap } = await import("./services/enrollment-notify");
       const { buildAttendeeMails } = await import("./services/enrollment-email");
+      type NoticeKind = import("./services/enrollment-email").NoticeKind;
       const byTitle = await loadProgramMap();
       const programs = await googleSheetsService.getSecondarySheetPrograms();
       const title = String(req.query.title || (programs as any[])[0]?.title || "");
       const trainingType = String(req.query.type || "live");
-      const kind = String(req.query.kind || "confirm") === "reminder" ? "reminder" : "confirm";
+      const kindParam = String(req.query.kind || "confirm");
+      const kind: NoticeKind =
+        kindParam === "reminder" || kindParam === "reminder-eve" ? kindParam : "confirm";
       const { mails } = buildAttendeeMails(
         [{ name: "홍길동", phone: "010-1234-5678", email: "preview@example.com", programTitle: title, trainingType }],
         byTitle,

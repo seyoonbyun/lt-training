@@ -30,7 +30,26 @@ import { REFUND_POLICY, REFUND_FORM_URL, REFUND_CONTACT, refundPolicyText } from
 import { TRAINING_SUMMARY_URL, CS_KAKAO_URL } from "../../shared/site-links";
 
 /** 안내 성격. 제목과 첫 문장이 달라진다. */
-export type NoticeKind = "confirm" | "reminder";
+/**
+ * 안내 종류.
+ *
+ *   confirm      결제 승인 직후
+ *   reminder-eve 트레이닝 **전날** 오후 3시 (리마인드 1차)
+ *   reminder     트레이닝 **당일** 오전 10시 (리마인드 2차)
+ *
+ * ⛔ 리마인드를 2차수로 늘리면서 이 타입을 안 늘려, 전날 안내에도
+ *    "오늘 교육이 진행됩니다" 가 나갔다(2026-09-07, 140건). 차수가 늘면
+ *    **여기부터** 늘릴 것 — 문구를 만드는 곳이 차수를 모르면 같은 사고가 난다.
+ */
+export type NoticeKind = "confirm" | "reminder" | "reminder-eve";
+
+/** 리마인드(전날·당일)인가 */
+export const isReminder = (kind: NoticeKind): boolean =>
+  kind === "reminder" || kind === "reminder-eve";
+
+/** 그 안내가 가리키는 날 — 전날 안내는 "내일", 당일 안내는 "오늘" */
+export const noticeDayWord = (kind: NoticeKind): string =>
+  kind === "reminder-eve" ? "내일" : "오늘";
 
 /** 템플릿(01-formal.html) 의 브랜드 레드 */
 const RED = "#c41324";
@@ -200,8 +219,8 @@ function titleSummary(titles: string[]): string {
 }
 
 function subjectFor(kind: NoticeKind, titles: string[]): string {
-  return kind === "reminder"
-    ? `[${BRAND}] 오늘 교육 안내 — ${titleSummary(titles)}`
+  return isReminder(kind)
+    ? `[${BRAND}] ${noticeDayWord(kind)} 교육 안내 — ${titleSummary(titles)}`
     : `[${BRAND}] 신청 완료 안내 — ${titleSummary(titles)}`;
 }
 
@@ -240,13 +259,15 @@ export function buildAttendeeMails(
     const orders = collectOrderIds(list);
 
     const headlineText =
-      kind === "reminder" ? `${name}님, 오늘 교육이 진행됩니다.` : `${name}님, 신청이 정상적으로 완료되었습니다.`;
+      isReminder(kind)
+        ? `${name}님, ${noticeDayWord(kind)} 교육이 진행됩니다.`
+        : `${name}님, 신청이 정상적으로 완료되었습니다.`;
     // 온라인 과목뿐인데 "장소 확인" 이라고 쓰면 어색하다. 카드에 장소 줄이 있을 때만 그렇게 쓴다.
     const hasVenue = blocks.some((b) => b.rows.some((r) => r.label === "장소"));
     const what = hasVenue ? "일정과 장소" : "일정과 입장 정보";
     const introText =
-      kind === "reminder"
-        ? `오늘 진행되는 ${BRAND} [${titleSummary(titles)}] 강의 안내입니다. 아래 ${what}를 확인해 주세요.`
+      isReminder(kind)
+        ? `${noticeDayWord(kind)} 진행되는 ${BRAND} [${titleSummary(titles)}] 강의 안내입니다. 아래 ${what}를 확인해 주세요.`
         : `${BRAND} [${titleSummary(titles)}] 강의에 신청해 주셔서 감사합니다. 아래 ${what} 확인 후 참석 부탁드립니다.`;
 
     return {
@@ -308,12 +329,12 @@ export function buildPayerMail(
     .join("\n\n");
 
   const headlineText =
-    kind === "reminder"
-      ? `${payer.name || ""}님, 대리 신청하신 교육이 오늘 진행됩니다.`
+    isReminder(kind)
+      ? `${payer.name || ""}님, 대리 신청하신 교육이 ${noticeDayWord(kind)} 진행됩니다.`
       : `${payer.name || ""}님, 대리 신청이 정상적으로 완료되었습니다.`;
   const introText =
-    kind === "reminder"
-      ? `대리 신청하신 ${recipients.length}건(수강자 ${people}명)의 교육이 오늘 진행됩니다. 과목별 입장 정보는 아래와 같습니다.`
+    isReminder(kind)
+      ? `대리 신청하신 ${recipients.length}건(수강자 ${people}명)의 교육이 ${noticeDayWord(kind)} 진행됩니다. 과목별 입장 정보는 아래와 같습니다.`
       : `대리 신청 ${recipients.length}건(수강자 ${people}명)의 결제가 완료되었습니다. 과목별 입장 정보는 아래와 같습니다.`;
   const foot =
     "※ 연락처·이메일을 남긴 수강자에게는 위 안내가 개별 발송되었습니다.<br>" +

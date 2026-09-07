@@ -22,7 +22,7 @@ import {
   type ProgramInfo,
   type SmsRecipient,
 } from "./enrollment-notice";
-import type { NoticeKind } from "./enrollment-email";
+import { isReminder, noticeDayWord, type NoticeKind } from "./enrollment-email";
 import { REFUND_SUMMARY_SHORT, REFUND_FORM_URL } from "../../shared/refund-policy";
 import { TRAINING_SUMMARY_URL, CS_KAKAO_URL } from "../../shared/site-links";
 
@@ -93,7 +93,9 @@ export function buildAttendeeMessages(
     const blocks = list.map((r) => renderBlock(buildBlock(r.programTitle, r.trainingType, programs.get(r.programTitle))));
     const head = [
       HEAD,
-      kind === "reminder" ? `${name}님, 오늘 교육이 진행됩니다.` : `${name}님, 신청이 완료되었습니다.`,
+      isReminder(kind)
+        ? `${name}님, ${noticeDayWord(kind)} 교육이 진행됩니다.`
+        : `${name}님, 신청이 완료되었습니다.`,
     ].join("\n");
     const orders = collectOrderIds(list);
     const foot = [
@@ -131,8 +133,8 @@ export function buildPayerMessage(
 
   const text = [
     HEAD,
-    kind === "reminder"
-      ? `${payer.name || ""}님, 대리 신청하신 교육이 오늘 진행됩니다.`
+    isReminder(kind)
+      ? `${payer.name || ""}님, 대리 신청하신 교육이 ${noticeDayWord(kind)} 진행됩니다.`
       : `${payer.name || ""}님, 대리 신청 ${recipients.length}건(수강자 ${countPeople(recipients)}명) 결제가 완료되었습니다.`,
     "",
     blocks.join("\n\n"),

@@ -22,14 +22,21 @@ import type { ColumnName } from "./sheet-schema";
 import { googleSheetsService } from "./google-sheets";
 import { loadProgramMap, sendEnrollmentNotice } from "./enrollment-notify";
 import type { SmsRecipient } from "./enrollment-notice";
+import type { NoticeKind } from "./enrollment-email";
 import { sendStamp } from "../../shared/stamp";
 
 const SHEET_NAME = "2026 LTT 신청명단";
 
-/** 차수별 설정. 열 위치는 sheet-schema 가 유일한 출처다. */
+/**
+ * 차수별 설정. 열 위치는 sheet-schema 가 유일한 출처다.
+ *
+ * ⛔ `kind` 를 빠뜨리지 말 것 — 이게 없어서 전날 안내에도 "오늘 교육이 진행됩니다"
+ *    가 나갔다(2026-09-07 멤버십 위원회 T., 140건). 차수를 늘리면 문구를 만드는
+ *    쪽(`NoticeKind`)도 함께 늘려야 한다.
+ */
 export const STAGES = {
-  1: { label: "1차", column: "리마인드1차" as ColumnName, dayOffset: 1, defaultHour: 15, when: "전날 오후 3시" },
-  2: { label: "2차", column: "리마인드2차" as ColumnName, dayOffset: 0, defaultHour: 10, when: "당일 오전 10시" },
+  1: { label: "1차", column: "리마인드1차" as ColumnName, dayOffset: 1, defaultHour: 15, when: "전날 오후 3시", kind: "reminder-eve" as NoticeKind },
+  2: { label: "2차", column: "리마인드2차" as ColumnName, dayOffset: 0, defaultHour: 10, when: "당일 오전 10시", kind: "reminder" as NoticeKind },
 } as const;
 
 export type Stage = keyof typeof STAGES;
@@ -135,7 +142,7 @@ export async function runReminder(
   const result = await sendEnrollmentNotice(
     {
       recipients: rows.map((r) => r.recipient),
-      kind: "reminder",
+      kind: cfg.kind,
       context: `(리마인드${cfg.label} ${targetDate})`,
     },
     programMap

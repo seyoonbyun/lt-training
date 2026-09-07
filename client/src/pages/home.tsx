@@ -329,7 +329,8 @@ const NOTICE_QA: { q: string; a: React.ReactNode }[] = [
     a: (
       <>
         결제가 완료되면 문자와 이메일로 온라인 강의실 링크와 VOD 열람비번을 보내드립니다.
-        트레이닝 <strong className="text-foreground">당일 오전 10시</strong>에 한 번 더 안내드립니다.
+        트레이닝 <strong className="text-foreground">전날 오후 3시</strong>와{" "}
+        <strong className="text-foreground">당일 오전 10시</strong>에 한 번씩 더 안내드립니다.
         <NoticeSample kind="confirm" label="결제 완료 안내" />
         <NoticeSample kind="reminder" label="트레이닝 당일 안내" />
       </>
