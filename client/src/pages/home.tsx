@@ -20,7 +20,8 @@ import buildingImage from "@assets/화면 캡처 2025-08-11 232105_1754922103429
 /**
  * 녹화본(VOD) 열람 칸.
  *
- * 신청자에게 문자·메일로 안내한 **강의실 암호**를 맞혀야 영상 주소가 나온다.
+ * 신청자에게 문자·메일로 안내한 **강의실 암호**를 맞혀야 주소가 나온다.
+ * 녹화본(O열)이 있으면 그리로, 없으면 온라인 강의실(I열)로 보낸다.
  * ⛔ 주소도 암호도 화면 코드에 없다 — 서버가 확인한 뒤에만 내려준다.
  * ⭐ 새 창을 띄우고 **링크도 화면에 남긴다** (팝업 차단에 막히면 아무것도 안 남는다).
  */
@@ -72,14 +73,14 @@ function VodUnlock({ program }: { program: SecondaryProgram }) {
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
           >
-            녹화본 보기
+            강의실 열기
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </>
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            신청하실 때 문자·이메일로 안내드린 <strong>열람 비밀번호</strong>를 입력하시면 영상으로 연결됩니다.
+            신청하실 때 문자·이메일로 안내드린 <strong>열람 비밀번호</strong>를 입력하시면 온라인 강의실로 연결됩니다.
           </p>
           <form onSubmit={submit} className="flex gap-2">
             <input
@@ -635,21 +636,32 @@ export default function Home() {
                         지난 과목은 칸 모양이 다가올 과목과 똑같아 혼란스럽다(2026-08-31 지적).
                         흐리게 만드는 대신 **여기가 녹화본 통로**라고 적는다.
                         모바일은 칸이 40~50px 뿐이라 `VOD` 세 글자만 쓴다.
+
+                        ⭐ 2026-09-08 지시로 **온라인 강의실이 있는 전 과목**에 붙인다.
+                        O열(녹화본)을 아직 안 채운 과목도 강의실이 목적지라 같은 버튼을 쓴다.
+                        누르면 칸 전체가 그렇듯 세션 모달이 열리고, 거기서
+                        **문자로 받은 열람비번을 넣어야** 강의실로 연결된다 — 예전 방식 그대로다.
                       */}
-                      {past && (
+                      {program.hasVod || program.classroomUrl ? (
+                        <span
+                          /* 골드는 빨간 칸·흰 칸 어디에 놓여도 같은 색으로 읽힌다.
+                             금속 질감·반짝임은 index.css 의 .gold-shine 한 곳에 모아 뒀다. */
+                          className="gold-shine mt-0.5 inline-block rounded px-1 py-px text-[8px] md:text-[10px] font-bold leading-tight"
+                        >
+                          <span className="md:hidden">VOD</span>
+                          <span className="hidden md:inline">VOD 시청 ▸</span>
+                        </span>
+                      ) : past ? (
+                        /* 강의실 주소가 아직 빈 과목만 지난 뒤 「교육 종료」로 남는다. */
                         <span
                           className={`mt-0.5 inline-block rounded px-1 py-px text-[8px] md:text-[10px] font-bold leading-tight ${
-                            program.hasVod
-                              // 골드는 빨간 칸·흰 칸 어디에 놓여도 같은 색으로 읽힌다.
-                              // 금속 질감·반짝임은 index.css 의 .gold-shine 한 곳에 모아 뒀다.
-                              ? 'gold-shine'
-                              : isOffline ? 'bg-white/25 text-white' : 'bg-red-600/10 text-red-600'
+                            isOffline ? 'bg-white/25 text-white' : 'bg-red-600/10 text-red-600'
                           }`}
                         >
-                          <span className="md:hidden">{program.hasVod ? 'VOD' : '종료'}</span>
-                          <span className="hidden md:inline">{program.hasVod ? 'VOD 시청 ▸' : '교육 종료'}</span>
+                          <span className="md:hidden">종료</span>
+                          <span className="hidden md:inline">교육 종료</span>
                         </span>
-                      )}
+                      ) : null}
                     </button>
                   );
                 })}
@@ -761,9 +773,9 @@ export default function Home() {
         )}
       </div>
 
-      {/* 녹화본이 올라온 과목이면 여기서 바로 본다. 지난 과목의 캘린더 칸이
-          VOD 신청자에게는 이 통로다 — 그래서 지난 과목도 캘린더에 그대로 남긴다. */}
-      {program.hasVod && <VodUnlock key={program.id} program={program} />}
+      {/* 캘린더 칸의 VOD 버튼을 누르면 결국 이 칸으로 온다. 비번을 맞춰야
+          주소가 나오는 건 예전과 같고, 목적지만 O열 → 없으면 I열(강의실)로 넓혔다. */}
+      {(program.hasVod || program.classroomUrl) && <VodUnlock key={program.id} program={program} />}
 
       {/* 설명 */}
       {program.description ? (

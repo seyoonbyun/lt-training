@@ -256,10 +256,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   /**
    * 녹화본(VOD) 열람. 신청자에게 문자·메일로 안내한 **강의실 암호**(세션등록 M열)를
-   * 맞혀야 영상 주소(O열)를 내려준다.
+   * 맞혀야 주소를 내려준다.
    *
-   * ⛔ 주소도 암호도 목록 API 에 실지 않는다 — 공개 페이지라 그대로 읽힌다.
-   * ⭐ 실패 사유를 "암호가 다릅니다" 하나로 합치지 않는다. 아직 녹화본이 없는 과목과
+   * ⭐ 내려주는 주소는 **O열(녹화본) → 없으면 I열(온라인 강의실)** 순이다.
+   *    실시간 입장과 녹화본이 같은 강의실 페이지에 있어, O열을 아직 안 채운
+   *    과목도 비번만 맞추면 강의실로 보낸다(2026-09-08 지시).
+   *
+   * ⛔ 암호는 목록 API 에 실지 않는다 — 공개 페이지라 그대로 읽힌다.
+   * ⭐ 실패 사유를 "암호가 다릅니다" 하나로 합치지 않는다. 아직 강의실이 없는 과목과
    *    암호를 틀린 경우는 신청자가 해야 할 일이 다르다.
    */
   app.post("/api/vod/unlock", applicationSubmitRateLimit, async (req, res) => {
@@ -274,9 +278,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const program = programs.find((p: any) => p.title === title);
       if (!program) return res.status(404).json({ message: "존재하지 않는 과목입니다." });
 
-      const url = String(program.vodUrl || "").trim();
+      // O열이 비어 있으면 I열(온라인 강의실)로 보낸다 — 녹화본도 거기 올라온다.
+      const url = String(program.vodUrl || "").trim() || String(program.classroomUrl || "").trim();
       if (!url) {
-        return res.status(404).json({ message: "아직 녹화본이 올라오지 않았습니다. 업로드 후 이 화면에서 바로 보실 수 있습니다." });
+        return res.status(404).json({ message: "아직 강의실이 열리지 않았습니다. 준비되는 대로 이 화면에서 바로 보실 수 있습니다." });
       }
 
       const expected = String(program.classroomPw || "").trim();
