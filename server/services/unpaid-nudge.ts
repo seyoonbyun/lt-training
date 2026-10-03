@@ -98,6 +98,9 @@ export async function runUnpaidNudge(now = new Date()): Promise<NudgeResult> {
   // 사본은 발송 건수에서 뺀다 — 실제 대상에게 몇 통 갔는지가 중요하다.
   result.sent = Math.max(0, sms.sent - copies.length);
 
+  // 발송 서비스가 닫혀 있으면 보낸 적이 없으니 V열에 발송 시각을 남기지 않는다.
+  if (sms.reason === "sms-closed") return result;
+
   // 발송을 시도한 묶음만 기록한다. 기록에 실패해도 발송 자체는 끝났으므로 로그로 남긴다
   // (다음 실행에서 다시 보내질 수 있으니 반드시 눈에 띄어야 한다).
   for (let i = 0; i < stamps.length; i++) {

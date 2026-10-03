@@ -125,7 +125,10 @@ export async function runPaymentExpiry(now = new Date()): Promise<FollowupResult
 
     // ⛔ 한 통도 못 나갔으면 발송 표시를 남기지 않는다. 표시만 남으면 12시간 뒤
     //   안내를 못 받은 분이 결제거부로 찍힌다.
-    if (r.notified === 0 && !sms.dryRun) {
+    if (sms.reason === "sms-closed") {
+      // 발송 서비스를 일부러 닫은 상태. 실패가 아니므로 관리자 알림을 보내지 않는다.
+      toStampFinal.length = 0;
+    } else if (r.notified === 0 && !sms.dryRun) {
       console.error(`⚠ [미결제] 2차 안내가 한 통도 나가지 않아 표시를 보류합니다 (대상 ${messages.length}묶음).`, sms.reason || "");
       void alertAdmin("미결제 2차 안내 발송 실패", `대상 ${messages.length}묶음에 한 통도 나가지 않았습니다.\n${sms.reason || ""}`);
       toStampFinal.length = 0;

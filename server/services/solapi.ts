@@ -45,8 +45,18 @@ function cfg() {
   return { apiKey, apiSecret, sender };
 }
 
+/**
+ * ⛔ 2026-10-04 상반기 종료로 **문자 발송 서비스를 닫았다**(사용자 지시).
+ *   모든 서버 문자(결제완료·리마인드·미결제 1·2차·설문·관리자 알림)가 이 모듈 하나를 거치므로
+ *   여기서 끊는다. 다시 열 때 Railway 에 LTT_SMS_ENABLED=on.
+ *   종료 뒤에도 미결제 안내가 돌아 고객에게 23:45 에 나갔고, 실패 알림이 매시간 관리자 폰으로 갔다.
+ */
+function isSmsClosed(): boolean {
+  return (process.env.LTT_SMS_ENABLED || "off").trim().toLowerCase() !== "on";
+}
+
 export function isSolapiConfigured(): boolean {
-  return cfg() !== null;
+  return !isSmsClosed() && cfg() !== null;
 }
 
 /** 실제로 보내지 않고 로그만 남기는 모드. 로컬 확인용. */
@@ -119,6 +129,13 @@ export async function sendMessages(messages: SmsMessage[], context = ""): Promis
     failed: 0,
     dryRun: isDryRun(),
   };
+
+  if (isSmsClosed()) {
+    result.skipped = messages.length;
+    result.reason = "sms-closed";
+    console.log(`[문자] 발송 서비스 닫힘(LTT_SMS_ENABLED≠on) — ${messages.length}건 보내지 않음 ${context}`);
+    return result;
+  }
 
   const valid = messages.filter((m) => {
     if (!isSendablePhone(m.to)) {
