@@ -14,6 +14,9 @@ import { ApplicationTypeModal } from "@/components/application/application-type-
 import { Calendar, Clock, User, MapPin, AlertTriangle, ArrowRight, Monitor, Users, ExternalLink } from "lucide-react";
 import { TRAINING_SUMMARY_URL, SURVEY_PATH } from "@shared/site-links";
 import heroImage from "@assets/Image_fx_1755098115275.jpg";
+
+/** 2026 상반기 일정 종료(2026-10-04). 하반기 신청을 다시 열 때 false 로. */
+const TRAINING_ENDED = true;
 import heroVideo from "@assets/team_1755249611475.mp4";
 import buildingImage from "@assets/화면 캡처 2025-08-11 232105_1754922103429.png";
 
@@ -354,6 +357,7 @@ const NOTICE_QA: { q: string; a: React.ReactNode }[] = [
 export default function Home() {
   const [, setLocation] = useLocation();
   const [isApplicationModalOpen, setIsApplicationModalOpen] = useState(false);
+  const [isEndedNoticeOpen, setIsEndedNoticeOpen] = useState(false);
   // 캘린더에서 클릭한 세션. 값이 있으면 정보 모달이 열린다.
   const [detailProgram, setDetailProgram] = useState<SecondaryProgram | null>(null);
 
@@ -380,8 +384,14 @@ export default function Home() {
   });
 
   // 신청은 하단 CTA 한 곳에서만 시작한다. 과목 선택은 신청서 안에서 한다.
+  // ⛔ 2026-10-04 상반기 일정 종료 — 신청서 대신 종료 안내를 띄운다(VOD 시청 통로는 그대로).
+  //    서버도 세션등록 K열 '마감'으로 신규 접수·결제를 막고 있다.
   const handleApplyClick = () => {
     setDetailProgram(null);
+    if (TRAINING_ENDED) {
+      setIsEndedNoticeOpen(true);
+      return;
+    }
     setIsApplicationModalOpen(true);
   };
 
@@ -1065,6 +1075,22 @@ export default function Home() {
               {renderProgramDetail(detailProgram)}
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isEndedNoticeOpen} onOpenChange={setIsEndedNoticeOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader className="pr-8">
+            <DialogTitle className="text-lg leading-snug text-left">
+              2026 상반기 LT 트레이닝이 종료되었습니다
+            </DialogTitle>
+          </DialogHeader>
+          <Button
+            onClick={() => setIsEndedNoticeOpen(false)}
+            className="w-full bg-red-600 hover:bg-red-700"
+          >
+            확인
+          </Button>
         </DialogContent>
       </Dialog>
 
