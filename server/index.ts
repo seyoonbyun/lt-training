@@ -3,6 +3,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static-serve";
 import { maintenance, getPreviewToken } from "./middleware/maintenance";
+import { siteClosed } from "./middleware/site-closed";
 import { startReminderScheduler } from "./services/reminder";
 import { startUnpaidNudgeScheduler } from "./services/unpaid-nudge";
 import { startPaymentExpiryScheduler } from "./services/payment-expiry";
@@ -13,6 +14,8 @@ import { startSurveySyncScheduler } from "./services/survey-sync";
 const app = express();
 app.set('trust proxy', true);
 
+// 2026 트레이닝 종료: 모든 요청에 종료 안내 팝업만 (다시 열기 = LTT_SITE_OPEN=on)
+app.use(siteClosed);
 // 재정비 모드: 켜져 있으면 모든 요청을 점검 안내로 응답 (해제 = MAINTENANCE_MODE=off)
 app.use(maintenance);
 app.use(express.json());
